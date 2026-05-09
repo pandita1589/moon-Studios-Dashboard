@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <!-- ── Básico ── -->
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>moon Studios — Portal Oficial</title>
+
+    <!-- ── SEO ── -->
+    <meta name="description" content="Portal oficial de moon Studios. Plataforma corporativa, gestión interna, credenciales y sistema empresarial." />
+    <meta name="author" content="moon Studios" />
+    <meta name="keywords" content="moon Studios, portal, empresa, empleados, credenciales, sistema corporativo" />
+    <meta name="theme-color" content="#0a0a0f" />
+    <meta name="robots" content="noindex, nofollow" />
+
+    <!-- ── Favicon ── -->
+    <link rel="icon" id="dynamic-favicon" type="image/png" href="/favicon.ico" />
+    <link rel="apple-touch-icon" href="https://ufvebjscabomuayqtyyo.supabase.co/storage/v1/object/public/employee-contracts/MARCA%20DE%20AGUA%20BLANCO.png" />
+
+    <!-- ── Open Graph ── -->
+    <meta property="og:title" content="moon Studios — Portal Oficial" />
+    <meta property="og:description" content="Plataforma digital corporativa de moon Studios." />
+    <meta property="og:image" content="https://ufvebjscabomuayqtyyo.supabase.co/storage/v1/object/public/employee-contracts/MARCA%20DE%20AGUA%20BLANCO.png" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://moon-studios-dashboard.netlify.app" />
+    <meta property="og:site_name" content="moon Studios" />
+
+    <!-- ── Twitter Card ── -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="moon Studios — Portal Oficial" />
+    <meta name="twitter:description" content="Sistema empresarial moon Studios." />
+    <meta name="twitter:image" content="https://ufvebjscabomuayqtyyo.supabase.co/storage/v1/object/public/employee-contracts/MARCA%20DE%20AGUA%20BLANCO.png" />
+
+    <!-- ── Fuente corporativa ── -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100;200;300;400;600;800&display=swap" rel="stylesheet" />
+
+    <style>
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+      :root {
+        --bg:      #0a0a0f;
+        --surface: #111116;
+        --border:  #1e1e26;
+        --text:    #ffffff;
+        --muted:   #52525b;
+        --subtle:  #3f3f46;
+        --titlebar-h: 42px;
+      }
+
+      html, body {
+        background-color: var(--bg);
+        color: var(--text);
+        font-family: 'Inter', system-ui, sans-serif;
+        min-height: 100vh;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        /* Evita selección accidental al arrastrar la ventana */
+        -webkit-user-select: none;
+        -moz-user-select: none;
+             user-select: none;
+      }
+
+      /* Permitir selección en contenido real */
+      #root * {
+        -webkit-user-select: text;
+        -moz-user-select: text;
+             user-select: text;
+      }
+
+      /* ── Scrollbar ── */
+      ::-webkit-scrollbar { width: 4px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: #2a2a35; border-radius: 4px; }
+      ::-webkit-scrollbar-thumb:hover { background: #3a3a48; }
+
+      /* ── Pantalla de carga ── */
+      #splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        background: var(--bg);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 28px;
+        transition: opacity 0.6s ease, visibility 0.6s ease;
+      }
+
+      #splash.hidden {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+
+      /* Logo splash */
+      .splash-logo {
+        width: 72px;
+        height: 72px;
+        -o-object-fit: contain;
+           object-fit: contain;
+        animation: logoFloat 3s ease-in-out infinite;
+        filter: brightness(0) invert(1) drop-shadow(0 0 20px rgba(255,255,255,0.08));
+      }
+
+      @keyframes logoFloat {
+        0%, 100% { transform: translateY(0px);  opacity: 1;    }
+        50%       { transform: translateY(-6px); opacity: 0.85; }
+      }
+
+      /* Texto splash */
+      .splash-title {
+        font-size: 20px;
+        font-weight: 200;
+        letter-spacing: 0.3em;
+        color: var(--text);
+        text-transform: lowercase;
+      }
+
+      .splash-title span {
+        color: var(--subtle);
+      }
+
+      /* Barra de carga */
+      .splash-bar-wrap {
+        width: 160px;
+        height: 1px;
+        background: var(--border);
+        border-radius: 1px;
+        overflow: hidden;
+      }
+
+      .splash-bar {
+        height: 100%;
+        width: 0%;
+        background: var(--text);
+        border-radius: 1px;
+        animation: loadBar 2s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+      }
+
+      @keyframes loadBar {
+        0%   { width: 0%;   opacity: 1; }
+        70%  { width: 80%;  opacity: 1; }
+        100% { width: 100%; opacity: 0.6; }
+      }
+
+      .splash-sub {
+        font-size: 10px;
+        font-weight: 300;
+        color: var(--muted);
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        animation: fadeInUp 1s ease 0.3s both;
+      }
+
+      @keyframes fadeInUp {
+        from { opacity: 0; transform: translateY(6px); }
+        to   { opacity: 1; transform: translateY(0);   }
+      }
+
+      /* ── App root: respeta el alto de la titlebar de Tauri ── */
+      #root {
+        padding-top: var(--titlebar-h);
+        animation: appFadeIn 0.5s ease both;
+      }
+
+      @keyframes appFadeIn {
+        from { opacity: 0; }
+        to   { opacity: 1; }
+      }
+
+      /* ── Selección de texto ── */
+      ::-moz-selection {
+        background: rgba(255, 255, 255, 0.1);
+        color: var(--text);
+      }
+      ::selection {
+        background: rgba(255, 255, 255, 0.1);
+        color: var(--text);
+      }
+    </style>
+    <script type="module" crossorigin src="/assets/index-Bi_LwuqB.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-Ck_HHLoN.css">
+  </head>
+
+  <body>
+
+    <!-- ── Pantalla de bienvenida ── -->
+    <div id="splash" role="status" aria-label="Cargando moon Studios">
+      <img
+        class="splash-logo"
+        src="https://ufvebjscabomuayqtyyo.supabase.co/storage/v1/object/public/employee-contracts/MARCA%20DE%20AGUA%20BLANCO.png"
+        alt="moon Studios"
+        crossorigin="anonymous"
+        onerror="this.style.display='none'"
+      />
+      <p class="splash-title">moon <span>Studios</span></p>
+      <div class="splash-bar-wrap">
+        <div class="splash-bar"></div>
+      </div>
+      <p class="splash-sub">Iniciando portal corporativo</p>
+    </div>
+
+    <!-- ── App React ── -->
+    <div id="root"></div>
+
+    <script>
+      // ── Favicon dinámico desde URL externa ──
+      (function () {
+        const LOGO_URL = 'https://ufvebjscabomuayqtyyo.supabase.co/storage/v1/object/public/employee-contracts/MARCA%20DE%20AGUA%20BLANCO.png';
+        const link = document.getElementById('dynamic-favicon');
+
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = function () {
+          const canvas = document.createElement('canvas');
+          canvas.width = 64; canvas.height = 64;
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = '#0a0a0f';
+          ctx.fillRect(0, 0, 64, 64);
+          const p = 6;
+          ctx.drawImage(img, p, p, 64 - p * 2, 64 - p * 2);
+          link.href = canvas.toDataURL('image/png');
+        };
+        img.onerror = function () {
+          const canvas = document.createElement('canvas');
+          canvas.width = 64; canvas.height = 64;
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = '#0a0a0f';
+          ctx.fillRect(0, 0, 64, 64);
+          ctx.fillStyle = '#ffffff';
+          ctx.font = '300 36px Inter, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('m', 32, 34);
+          link.href = canvas.toDataURL('image/png');
+        };
+        img.src = LOGO_URL;
+      })();
+
+      // ── Ocultar splash cuando React esté listo ──
+      (function () {
+        const splash = document.getElementById('splash');
+        const MIN_DISPLAY = 2200;
+        const start = Date.now();
+
+        const hideSplash = () => {
+          const elapsed = Date.now() - start;
+          const delay = Math.max(0, MIN_DISPLAY - elapsed);
+          setTimeout(() => splash.classList.add('hidden'), delay);
+        };
+
+        const observer = new MutationObserver(() => {
+          const root = document.getElementById('root');
+          if (root && root.children.length > 0) {
+            observer.disconnect();
+            hideSplash();
+          }
+        });
+
+        observer.observe(document.getElementById('root'), { childList: true, subtree: true });
+
+        window.addEventListener('load', () => setTimeout(hideSplash, 500));
+      })();
+    </script>
+  </body>
+</html>

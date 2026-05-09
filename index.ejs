@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title><%= title %></title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --black:  #080808;
+      --g1:     #111111;
+      --g2:     #1a1a1a;
+      --g3:     #2a2a2a;
+      --g4:     #444444;
+      --g5:     #888888;
+      --g6:     #cccccc;
+      --white:  #f5f5f5;
+      --border: rgba(255,255,255,0.07);
+      --glow:   rgba(255,255,255,0.04);
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--black);
+      color: var(--white);
+      font-family: 'DM Mono', monospace;
+      font-size: 14px;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+      pointer-events: none; z-index: 0;
+    }
+
+    .grid-bg {
+      position: fixed; inset: 0;
+      background-image:
+        linear-gradient(var(--border) 1px, transparent 1px),
+        linear-gradient(90deg, var(--border) 1px, transparent 1px);
+      background-size: 60px 60px;
+      pointer-events: none; z-index: 0;
+    }
+
+    .wrapper {
+      position: relative; z-index: 1;
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 0 32px;
+    }
+
+    header {
+      padding: 40px 0 0;
+      display: flex; align-items: center; justify-content: space-between;
+      opacity: 0; animation: fade-up .5s ease forwards .05s;
+    }
+
+    .logo { display: flex; align-items: center; gap: 12px; }
+    .logo-moon { font-size: 22px; filter: drop-shadow(0 0 8px rgba(255,255,255,0.3)); }
+    .logo-text { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 15px; letter-spacing: .06em; }
+
+    .status-pill {
+      display: flex; align-items: center; gap: 7px;
+      padding: 6px 14px;
+      border: 1px solid var(--border); border-radius: 999px;
+      background: var(--g2);
+      font-size: 11px; letter-spacing: .08em; color: var(--g5);
+    }
+
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: #4ade80; box-shadow: 0 0 8px #4ade80; animation: blink 2s ease-in-out infinite; }
+    .dot.offline { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
+
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    .hero { padding: 80px 0 56px; display: flex; flex-direction: column; align-items: center; text-align: center; }
+
+    .avatar-ring { position: relative; margin-bottom: 36px; opacity: 0; animation: fade-up .6s ease forwards .15s; }
+
+    .avatar-outer {
+      width: 100px; height: 100px; border-radius: 50%;
+      background: linear-gradient(135deg, #333 0%, #111 100%);
+      border: 1px solid var(--g3);
+      display: flex; align-items: center; justify-content: center; overflow: hidden;
+      box-shadow: 0 0 0 1px var(--border), 0 0 40px rgba(255,255,255,0.05);
+      animation: ring-pulse 3s ease-in-out infinite;
+    }
+
+    @keyframes ring-pulse {
+      0%,100% { box-shadow: 0 0 0 1px var(--border), 0 0 40px rgba(255,255,255,0.05); }
+      50%      { box-shadow: 0 0 0 1px rgba(255,255,255,0.15), 0 0 60px rgba(255,255,255,0.1); }
+    }
+
+    .avatar-img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; display: none; }
+    .avatar-img.visible { display: block; }
+    .avatar-fallback { font-size: 36px; filter: drop-shadow(0 0 10px rgba(255,255,255,0.2)); }
+    .avatar-status { position: absolute; bottom: 4px; right: 4px; width: 18px; height: 18px; border-radius: 50%; background: #4ade80; border: 2px solid var(--black); box-shadow: 0 0 8px #4ade80; }
+    .avatar-status.offline { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
+    .gif-badge { position: absolute; top: 2px; right: 2px; background: var(--g3); border: 1px solid var(--g4); border-radius: 4px; padding: 1px 5px; font-size: 9px; letter-spacing: .08em; color: var(--g5); display: none; }
+    .gif-badge.visible { display: block; }
+
+    .hero-tag {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 5px 14px; border: 1px solid var(--border); border-radius: 4px;
+      font-size: 11px; letter-spacing: .12em; color: var(--g5);
+      margin-bottom: 28px; opacity: 0; animation: fade-up .6s ease forwards .2s;
+    }
+    .hero-tag span { width: 1px; height: 10px; background: var(--g4); }
+
+    h1 { font-family: 'Syne', sans-serif; font-weight: 800; font-size: clamp(38px, 7vw, 68px); line-height: 1; letter-spacing: -.03em; margin-bottom: 8px; opacity: 0; animation: fade-up .7s ease forwards .25s; }
+
+    .bot-username { font-family: 'Syne', sans-serif; font-weight: 600; font-size: clamp(18px, 3vw, 26px); letter-spacing: -.01em; color: var(--g5); margin-bottom: 28px; min-height: 32px; opacity: 0; animation: fade-up .7s ease forwards .3s; }
+
+    .hero-desc { max-width: 480px; margin: 0 auto 44px; color: var(--g5); line-height: 1.8; font-size: 12px; opacity: 0; animation: fade-up .7s ease forwards .35s; }
+
+    .url-box { display: inline-flex; align-items: center; border: 1px solid var(--g3); border-radius: 8px; overflow: hidden; background: var(--g1); opacity: 0; animation: fade-up .7s ease forwards .4s; }
+    .url-label { padding: 11px 16px; background: var(--g2); border-right: 1px solid var(--g3); font-size: 10px; letter-spacing: .1em; color: var(--g5); }
+    .url-val { padding: 11px 20px; font-size: 12px; color: var(--g6); letter-spacing: .02em; }
+    .url-btn { padding: 11px 16px; border: none; border-left: 1px solid var(--g3); background: transparent; font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: .1em; color: var(--g5); cursor: pointer; transition: background .2s, color .2s; }
+    .url-btn:hover { background: var(--g2); color: var(--white); }
+
+    section { padding: 56px 0; border-top: 1px solid var(--border); opacity: 0; animation: fade-up .7s ease forwards; }
+    section:nth-child(1){ animation-delay:.5s }
+    section:nth-child(2){ animation-delay:.6s }
+    section:nth-child(3){ animation-delay:.7s }
+
+    .sec-label { font-size: 10px; letter-spacing: .2em; color: var(--g4); text-transform: uppercase; margin-bottom: 24px; display: flex; align-items: center; gap: 12px; }
+    .sec-label::after { content:''; flex:1; height:1px; background:var(--border); }
+
+    .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; }
+
+    .stat { padding: 24px 20px; background: var(--g1); border: 1px solid var(--border); border-radius: 6px; transition: background .2s, border-color .2s; }
+    .stat:hover { background: var(--g2); border-color: var(--g3); }
+    .stat-val { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 28px; letter-spacing: -.03em; color: var(--white); margin-bottom: 6px; min-height: 36px; display: flex; align-items: center; }
+    .stat-lbl { font-size: 10px; letter-spacing: .12em; color: var(--g5); }
+
+    .filter-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 20px; }
+    .tab-btn {
+      padding: 6px 14px; border: 1px solid var(--border); border-radius: 4px;
+      background: transparent; font-family: 'DM Mono', monospace;
+      font-size: 10px; letter-spacing: .1em; color: var(--g5);
+      cursor: pointer; transition: all .2s;
+    }
+    .tab-btn:hover { border-color: var(--g4); color: var(--g6); }
+    .tab-btn.active { background: var(--g2); border-color: var(--g4); color: var(--white); }
+
+    .endpoints { display: flex; flex-direction: column; gap: 2px; }
+    .ep-group { margin-bottom: 4px; }
+    .ep-group-label { font-size: 9px; letter-spacing: .2em; color: var(--g4); text-transform: uppercase; padding: 16px 4px 8px; }
+
+    .ep {
+      display: grid; grid-template-columns: 64px 280px 1fr auto;
+      align-items: center; gap: 16px;
+      padding: 12px 20px; border-radius: 6px;
+      border: 1px solid transparent;
+      transition: background .15s, border-color .15s;
+    }
+    .ep:hover { background: var(--glow); border-color: var(--border); }
+    .ep.hidden { display: none; }
+
+    .meth { font-size: 10px; font-weight: 500; letter-spacing: .08em; padding: 3px 8px; border-radius: 3px; text-align: center; }
+    .meth.get    { background:rgba(74,222,128,.08);  color:#4ade80; border:1px solid rgba(74,222,128,.15); }
+    .meth.post   { background:rgba(251,191,36,.08);  color:#fbbf24; border:1px solid rgba(251,191,36,.15); }
+    .meth.patch  { background:rgba(96,165,250,.08);  color:#60a5fa; border:1px solid rgba(96,165,250,.15); }
+    .meth.put    { background:rgba(167,139,250,.08); color:#a78bfa; border:1px solid rgba(167,139,250,.15); }
+    .meth.del    { background:rgba(248,113,113,.08); color:#f87171; border:1px solid rgba(248,113,113,.15); }
+
+    .ep-path { font-size: 12px; color: var(--g6); letter-spacing: .02em; }
+    .ep-path .p { color: var(--g4); }
+    .ep-desc { font-size: 11px; color: var(--g5); }
+
+    .auth-tag { font-size: 10px; letter-spacing: .08em; color: var(--g4); border: 1px solid var(--g3); padding: 3px 8px; border-radius: 3px; white-space: nowrap; }
+    .auth-tag.public  { color: #4ade80; border-color: rgba(74,222,128,.2); }
+    .auth-tag.bearer  { color: #60a5fa; border-color: rgba(96,165,250,.2); }
+    .auth-tag.apikey  { color: #fbbf24; border-color: rgba(251,191,36,.2); }
+
+    .auth-box { background: var(--g1); border: 1px solid var(--border); border-radius: 8px; padding: 28px 32px; }
+    .auth-box h3 { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 15px; margin-bottom: 10px; letter-spacing: -.01em; }
+    .auth-box p { color: var(--g5); line-height: 1.8; font-size: 12px; margin-bottom: 18px; }
+    .code { background: var(--black); border: 1px solid var(--g3); border-radius: 6px; padding: 16px 20px; font-size: 12px; line-height: 2; overflow-x: auto; }
+    .k { color: #60a5fa; } .v { color: #4ade80; } .c { color: var(--g4); } .u { color: var(--g6); }
+
+    .privacy-banner {
+      background: linear-gradient(135deg, rgba(74,222,128,.04), rgba(96,165,250,.04));
+      border: 1px solid rgba(74,222,128,.12);
+      border-radius: 8px; padding: 20px 24px;
+      margin-bottom: 24px;
+      display: flex; align-items: flex-start; gap: 16px;
+    }
+    .privacy-icon { font-size: 20px; flex-shrink: 0; margin-top: 2px; }
+    .privacy-text h4 { font-family: 'Syne', sans-serif; font-size: 13px; font-weight: 700; color: var(--white); margin-bottom: 6px; }
+    .privacy-text p { font-size: 11px; color: var(--g5); line-height: 1.7; }
+    .privacy-text a { color: var(--g6); text-decoration: none; }
+    .privacy-text a:hover { color: var(--white); }
+
+    footer { border-top: 1px solid var(--border); padding: 36px 0; display: flex; align-items: center; justify-content: space-between; opacity: 0; animation: fade-up .7s ease forwards .9s; }
+    footer p { font-size: 11px; letter-spacing: .08em; color: var(--g4); }
+    footer a { color: var(--g5); text-decoration: none; transition: color .2s; }
+    footer a:hover { color: var(--white); }
+    .foot-links { display: flex; gap: 24px; }
+
+    .toast { position: fixed; bottom: 28px; right: 28px; background: var(--g2); border: 1px solid var(--g3); border-radius: 6px; padding: 10px 18px; font-size: 12px; letter-spacing: .05em; color: var(--white); transform: translateY(12px); opacity: 0; transition: all .3s ease; pointer-events: none; z-index: 99; }
+    .toast.show { transform: translateY(0); opacity: 1; }
+
+    @keyframes fade-up { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:translateY(0)} }
+
+    @media(max-width:700px) {
+      .ep { grid-template-columns: 64px 1fr; }
+      .ep-desc, .auth-tag { display: none; }
+      .stats-grid { grid-template-columns: repeat(2,1fr); }
+      header { flex-direction: column; gap: 14px; align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+<div class="grid-bg"></div>
+
+<div class="wrapper">
+
+  <header>
+    <div class="logo">
+      <span class="logo-moon">🌙</span>
+      <span class="logo-text">LUNA NET</span>
+    </div>
+    <div class="status-pill">
+      <span class="dot <%= bot.status === 'offline' ? 'offline' : '' %>" id="header-dot"></span>
+      <span id="header-status"><%= bot.status === 'online' ? 'API OPERACIONAL' : 'OFFLINE' %></span>
+    </div>
+  </header>
+
+  <div class="hero">
+    <div class="avatar-ring">
+      <div class="avatar-outer" id="avatar-outer">
+        <% if (bot.avatar) { %>
+          <img id="avatar-img" class="avatar-img visible" src="<%= bot.avatar %>" alt="Luna NET" />
+          <span class="avatar-fallback" id="avatar-fallback" style="display:none">🌙</span>
+        <% } else { %>
+          <img id="avatar-img" class="avatar-img" alt="Luna NET" />
+          <span class="avatar-fallback" id="avatar-fallback">🌙</span>
+        <% } %>
+      </div>
+      <div class="avatar-status <%= bot.status === 'offline' ? 'offline' : '' %>" id="avatar-status"></div>
+      <% if (bot.gif) { %>
+        <span class="gif-badge visible" id="gif-badge">GIF</span>
+      <% } else { %>
+        <span class="gif-badge" id="gif-badge">GIF</span>
+      <% } %>
+    </div>
+
+    <div class="hero-tag"><span></span>API PERSONALIZADO DE LUNA NET<span></span></div>
+    <h1>API <span style="color:var(--g4)">/</span> v1</h1>
+    <div class="bot-username" id="bot-username"><%= bot.username %></div>
+
+    <p class="hero-desc">
+      Interfaz programática para interactuar con el bot Luna NET,
+      gestionar servidores, usuarios y configuraciones en tiempo real.
+    </p>
+
+    <div class="url-box">
+      <span class="url-label">BASE URL</span>
+      <span class="url-val" id="base-url"><%= baseUrl %></span>
+      <button class="url-btn" onclick="copyUrl()">COPIAR</button>
+    </div>
+  </div>
+
+  <section>
+    <div class="sec-label">ESTADÍSTICAS EN VIVO</div>
+    <div class="stats-grid">
+      <div class="stat">
+        <div class="stat-val"><span id="stat-servers"><%= bot.servers.toLocaleString() %></span></div>
+        <div class="stat-lbl">SERVIDORES</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val"><span id="stat-users"><%= bot.users.toLocaleString() %></span></div>
+        <div class="stat-lbl">USUARIOS</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val"><span id="stat-ping"><%= bot.ping %>ms</span></div>
+        <div class="stat-lbl">PING (ms)</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val"><span id="stat-status"><%= bot.status.toUpperCase() %></span></div>
+        <div class="stat-lbl">ESTADO</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-label">ENDPOINTS</div>
+
+    <div class="privacy-banner">
+      <div class="privacy-icon">🛡️</div>
+      <div class="privacy-text">
+        <h4>Cumplimiento de Privacidad — Discord & GDPR</h4>
+        <p>
+          Esta API cumple con la Política de Privacidad de Luna NET.
+          Los endpoints de miembros retornan únicamente IDs, usernames y roles — <strong>nunca contenido de mensajes</strong>.
+        </p>
+      </div>
+    </div>
+
+    <div class="filter-tabs">
+      <button class="tab-btn active" data-filter="all" onclick="filterEps(this,'all')">TODOS</button>
+      <button class="tab-btn" data-filter="public" onclick="filterEps(this,'public')">🔓 PÚBLICO</button>
+      <button class="tab-btn" data-filter="bearer" onclick="filterEps(this,'bearer')">👤 BEARER</button>
+      <button class="tab-btn" data-filter="apikey" onclick="filterEps(this,'apikey')">🔑 API KEY</button>
+      <button class="tab-btn" data-filter="mod" onclick="filterEps(this,'mod')">🔨 MODERACIÓN</button>
+    </div>
+
+    <div class="endpoints" id="ep-list">
+      <% endpoints.forEach(group => { %>
+        <div class="ep-group-label" data-group="<%= group.group %>"><%= group.label %></div>
+        <% group.items.forEach(ep => { %>
+          <div class="ep" data-auth="<%= ep.auth %>" data-group="<%= group.group %>">
+            <span class="meth <%= ep.method.toLowerCase() %>"><%= ep.method %></span>
+            <span class="ep-path"><%= ep.path %></span>
+            <span class="ep-desc"><%= ep.desc %></span>
+            <span class="auth-tag <%= ep.auth %>"><%= ep.auth.toUpperCase() %></span>
+          </div>
+        <% }) %>
+      <% }) %>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-label">AUTENTICACIÓN</div>
+    <div class="auth-box">
+      <h3>Cabeceras requeridas</h3>
+      <p>
+        Endpoints con <code style="color:var(--g6)">API KEY</code> requieren el header
+        <code style="color:var(--g6)">x-api-key</code>.
+        Endpoints con <code style="color:var(--g6)">BEARER</code> requieren token OAuth2 de Discord.
+      </p>
+      <div class="code">
+        <span class="c"># API KEY — endpoints de bot/admin</span><br>
+        curl <span class="u"><%= baseUrl %>/api/bot/status</span> \<br>
+        &nbsp;&nbsp;-H <span class="v">"x-api-key: TU_API_SECRET"</span><br><br>
+        <span class="c"># Bearer — endpoints de servidor (requiere ser admin)</span><br>
+        curl <span class="u"><%= baseUrl %>/api/servers/GUILD_ID/members</span> \<br>
+        &nbsp;&nbsp;-H <span class="v">"Authorization: Bearer TU_TOKEN_DISCORD"</span>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p>© 2026 <a href="#">MOON STUDIOS</a> — LUNA NET API</p>
+    <div class="foot-links">
+      <a href="/health">HEALTH</a>
+      <a href="/api/public/stats">STATS</a>
+      <a href="https://luna-net.netlify.app/privacy-policy">LEGAL</a>
+      <a href="https://discord.gg/5dR8p733Ac" target="_blank">DISCORD</a>
+    </div>
+  </footer>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  function filterEps(btn, filter) {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+
+    document.querySelectorAll('.ep-group-label').forEach(lbl => {
+      lbl.style.display = filter === 'all' ? '' : 'none';
+    });
+
+    document.querySelectorAll('.ep').forEach(ep => {
+      if (filter === 'all') {
+        ep.classList.remove('hidden');
+        return;
+      }
+      const auth = ep.dataset.auth || '';
+      const group = ep.dataset.group || '';
+      const show = auth === filter || group === filter;
+      ep.classList.toggle('hidden', !show);
+    });
+
+    if (filter !== 'all') {
+      document.querySelectorAll('.ep-group-label').forEach(lbl => {
+        const groupId = lbl.dataset.group;
+        const hasVisible = [...document.querySelectorAll(`.ep[data-group="${groupId}"]`)]
+          .some(e => !e.classList.contains('hidden'));
+        lbl.style.display = hasVisible ? '' : 'none';
+      });
+    }
+  }
+
+  function copyUrl() {
+    const url = document.getElementById('base-url').textContent;
+    navigator.clipboard.writeText(url).then(() => showToast('URL copiada al portapapeles'));
+  }
+
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 2200);
+  }
+
+  // Actualizar stats cada 30 segundos
+  async function refreshStats() {
+    try {
+      const res = await fetch('/api/public/stats');
+      const json = await res.json();
+      const d = json.data;
+      
+      document.getElementById('stat-servers').textContent = d.servers.toLocaleString();
+      document.getElementById('stat-users').textContent = d.users.toLocaleString();
+      document.getElementById('stat-status').textContent = d.status.toUpperCase();
+      
+      const dot = document.getElementById('header-dot');
+      const status = document.getElementById('header-status');
+      
+      if (d.status === 'online') {
+        dot.classList.remove('offline');
+        status.textContent = 'API OPERACIONAL';
+      } else {
+        dot.classList.add('offline');
+        status.textContent = 'OFFLINE';
+      }
+    } catch (e) {
+      console.log('Error actualizando stats');
+    }
+  }
+
+  setInterval(refreshStats, 30000);
+</script>
+</body>
+</html>
