@@ -18,6 +18,11 @@ firebase-debug.*.log*
 
 # ── Tauri (MUY IMPORTANTE - pesa ~2GB) ──
 src-tauri/target/
+src-tauri/moonkey.key
+src-tauri/moonkey.key.pub
+
+src/
+src-ssr/
 
 # ── Vite / React build ──
 dist/

@@ -235,6 +235,7 @@ const [lightboxOpen, setLightboxOpen] = useState(false);
 const [currentBannerIndex, setCurrentBannerIndex] = useState(0);
 const [isPlaying, setIsPlaying] = useState(true);
 const [hoveringBanner, setHoveringBanner] = useState(false);
+const [saveSuccessModal, setSaveSuccessModal] = useState(false);
 
 const carouselRef = useRef<NodeJS.Timeout | null>(null);
 const imageRef = useRef<HTMLImageElement>(null);
@@ -1944,12 +1945,9 @@ try {
   console.warn('logActivity falló (no crítico):', logError);
 }
 
-alert('✓ Configuración guardada correctamente');
-
-    alert('✓ Configuración guardada correctamente');
+setSaveSuccessModal(true);
   } catch (error) {
     console.error('Error saving banners:', error);
-    alert('Error al guardar los cambios');
   } finally {
     setSavingBanner(false);
   }
@@ -2523,6 +2521,56 @@ alert('✓ Configuración guardada correctamente');
   `}</style>
 </TabsContent>
       </Tabs>
+
+      {/* Modal de éxito al guardar banners */}
+<Dialog open={saveSuccessModal} onOpenChange={setSaveSuccessModal}>
+  <DialogContent className="bg-zinc-950 border-zinc-800 text-white max-w-sm text-center">
+    <div className="flex flex-col items-center gap-4 py-4">
+      {/* Ícono animado */}
+      <div className="w-16 h-16 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center">
+        <CheckCircle className="w-8 h-8 text-emerald-400" />
+      </div>
+
+      <div>
+        <h3 className="text-white font-extralight text-lg">
+          Cambios guardados
+        </h3>
+        <p className="text-zinc-500 font-extralight text-sm mt-1">
+          La configuración del carrusel y el orden de banners se guardaron correctamente.
+        </p>
+      </div>
+
+      {/* Detalle de lo guardado */}
+      <div className="w-full bg-zinc-900 rounded-xl border border-zinc-800 divide-y divide-zinc-800">
+        <div className="flex items-center justify-between px-4 py-2.5">
+          <span className="text-zinc-500 font-extralight text-xs">Autoplay</span>
+          <span className={`text-xs font-extralight ${isPlaying ? 'text-emerald-400' : 'text-zinc-400'}`}>
+            {isPlaying ? 'Activado' : 'Desactivado'}
+          </span>
+        </div>
+        <div className="flex items-center justify-between px-4 py-2.5">
+          <span className="text-zinc-500 font-extralight text-xs">Intervalo</span>
+          <span className="text-zinc-300 font-extralight text-xs">
+            {bannerSettings.interval / 1000}s
+          </span>
+        </div>
+        <div className="flex items-center justify-between px-4 py-2.5">
+          <span className="text-zinc-500 font-extralight text-xs">Banners</span>
+          <span className="text-zinc-300 font-extralight text-xs">
+            {banners.length} ordenados
+          </span>
+        </div>
+      </div>
+
+      <Button
+        onClick={() => setSaveSuccessModal(false)}
+        className="w-full bg-emerald-500 hover:bg-emerald-400 text-black font-extralight"
+      >
+        Entendido
+      </Button>
+    </div>
+  </DialogContent>
+</Dialog>
 
       <Dialog open={showViewer} onOpenChange={setShowViewer}>
         <DialogContent className="bg-zinc-950 border-zinc-800 text-white !w-[95vw] !max-w-[95vw] !h-[95vh] !max-h-[95vh] overflow-hidden p-0 gap-0 [&>button]:hidden">

@@ -1,0 +1,38 @@
+name: Release Moon Studios
+
+on:
+  push:
+    tags:
+      - 'v*'   # Se activa cuando haces: git tag v1.0.1
+
+jobs:
+  release:
+    runs-on: windows-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build y Release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Moon Studios ${{ github.ref_name }}"
+          releaseBody: "Nueva versión de Moon Studios Portal Corporativo."
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true   # ← Esto genera el latest.json automáticamente

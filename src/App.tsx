@@ -22,6 +22,7 @@ import PanelDiseno     from '@/components/PanelDiseno';
 import PanelRoles      from '@/components/PanelRoles';
 import PanelSecretaria from '@/components/PanelSecretaria';
 import TitleBar from '@/components/TitleBar';
+import UpdateNotifier from '@/components/UpdateNotifier';
 
 // Hook para detectar Tauri
 const useIsTauri = () => {
@@ -69,8 +70,10 @@ function App() {
   return (
     <AuthProvider>
       <SettingsProvider>
+        <UpdateNotifier />
         {/* TitleBar solo aparece en Tauri */}
         <TitleBar />
+
 
         {/* Contenido: top dinámico según si hay TitleBar o no */}
         <div style={{

@@ -1,6 +1,6 @@
 [package]
 name = "moon-studios"
-version = "1.0.0"
+version = "1.0.2"
 description = "Portal corporativo moon Studios"
 authors = ["moon Studios"]
 license = ""
@@ -21,3 +21,7 @@ serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 tauri = { version = "2.11.1", features = [] }
 tauri-plugin-log = "2"
+
+[dependencies]
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
