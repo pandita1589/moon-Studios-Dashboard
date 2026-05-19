@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "moon Studios",
-  "version": "1.0.0",
+  "version": "1.3.5",
   "identifier": "com.moonstudios.dashboard",
   "build": {
     "frontendDist": "../dist",
