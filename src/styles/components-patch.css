@@ -1,0 +1,264 @@
+/*
+ * components-patch.css
+ * Aplica el sistema de diseño moderno a todos los componentes grandes
+ * (Hilos, CEOPanel, Contador) sin necesidad de reescribirlos.
+ * Importar DESPUÉS de index.css en main.tsx:
+ *   import './styles/components-patch.css';
+ */
+
+/* ═══════════════════════════════════════════════════════════════════
+   BORDER RADIUS — hace todo más redondeado globalmente
+═══════════════════════════════════════════════════════════════════ */
+
+/* Cards y contenedores principales */
+.bg-zinc-950,
+.bg-zinc-900 {
+  --tw-bg-opacity: 1;
+}
+
+/* Todos los rounded-md se convierten en rounded-xl */
+[class*="rounded-md"] {
+  border-radius: 12px !important;
+}
+
+/* Todos los rounded-lg se convierten en rounded-xl */
+[class*="rounded-lg"] {
+  border-radius: 14px !important;
+}
+
+/* Cards de shadcn */
+[data-slot="card"] {
+  border-radius: 16px !important;
+}
+
+[data-slot="card-content"] {
+  border-radius: 0 0 16px 16px;
+}
+
+/* Dialogs */
+[data-slot="dialog-content"] {
+  border-radius: 20px !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   TABS — más modernas
+═══════════════════════════════════════════════════════════════════ */
+
+[data-slot="tabs-list"] {
+  border-radius: 14px !important;
+  padding: 4px !important;
+  gap: 2px;
+}
+
+[data-slot="tabs-trigger"] {
+  border-radius: 10px !important;
+  font-weight: 300 !important;
+  font-size: 0.75rem !important;
+  letter-spacing: 0.01em;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   SELECT — más moderno
+═══════════════════════════════════════════════════════════════════ */
+
+[data-slot="select-trigger"] {
+  border-radius: 12px !important;
+  font-weight: 300 !important;
+}
+
+[data-slot="select-content"] {
+  border-radius: 14px !important;
+}
+
+[data-slot="select-item"] {
+  border-radius: 8px !important;
+  font-weight: 300 !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   INPUTS y TEXTAREAS — más modernos
+═══════════════════════════════════════════════════════════════════ */
+
+[data-slot="input"],
+[data-slot="textarea"],
+input[class*="bg-zinc"],
+textarea[class*="bg-zinc"] {
+  border-radius: 12px !important;
+  font-weight: 300 !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   BUTTONS — más redondeados
+═══════════════════════════════════════════════════════════════════ */
+
+[data-slot="button"] {
+  border-radius: 12px !important;
+  font-weight: 300 !important;
+  letter-spacing: 0.01em;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   BADGES — pills más bonitas
+═══════════════════════════════════════════════════════════════════ */
+
+[data-slot="badge"] {
+  border-radius: 8px !important;
+  font-weight: 300 !important;
+  letter-spacing: 0.02em;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   SCROLLBARS — delgadas y elegantes en toda la app
+═══════════════════════════════════════════════════════════════════ */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.07) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.07);
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.12);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   HOVER STATES — más suaves
+═══════════════════════════════════════════════════════════════════ */
+
+/* Filas de tabla hover */
+tr:hover td {
+  background: rgba(255, 255, 255, 0.02) !important;
+}
+
+/* Elementos de lista hover */
+.hover\:bg-zinc-900:hover {
+  background-color: rgba(255,255,255,0.04) !important;
+}
+
+.hover\:bg-zinc-900\/50:hover,
+.hover\:bg-zinc-900\/30:hover {
+  background-color: rgba(255,255,255,0.03) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   BORDERS — más sutiles
+═══════════════════════════════════════════════════════════════════ */
+
+.border-zinc-800 {
+  border-color: hsl(var(--border)) !important;
+}
+
+.border-zinc-700 {
+  border-color: rgba(255,255,255,0.12) !important;
+}
+
+.divide-zinc-800 > * + *,
+.divide-zinc-900 > * + * {
+  border-color: hsl(var(--border)) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   BACKGROUNDS — unified con el sistema de variables
+═══════════════════════════════════════════════════════════════════ */
+
+/* Cards de componentes legacy */
+.bg-zinc-950 {
+  background-color: hsl(var(--card)) !important;
+}
+
+.bg-zinc-900\/50,
+.bg-zinc-900\/40,
+.bg-zinc-900\/30,
+.bg-zinc-900\/20 {
+  background-color: rgba(255,255,255,0.03) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   TYPOGRAPHY — DM Sans en toda la app
+═══════════════════════════════════════════════════════════════════ */
+
+.font-extralight {
+  font-weight: 300 !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   RECHARTS (Contador charts) — tema oscuro
+═══════════════════════════════════════════════════════════════════ */
+
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical line {
+  stroke: rgba(255,255,255,0.05) !important;
+}
+
+.recharts-tooltip-wrapper .recharts-default-tooltip {
+  background: hsl(var(--card)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  border-radius: 14px !important;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4) !important;
+}
+
+.recharts-tooltip-item-name,
+.recharts-tooltip-item-value {
+  font-weight: 300 !important;
+}
+
+.recharts-legend-item-text {
+  font-weight: 300 !important;
+  color: hsl(var(--muted-foreground)) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   CEOPanel — banners, task list fixes
+═══════════════════════════════════════════════════════════════════ */
+
+/* Banner carousel dentro del CEO panel */
+.group [class*="rounded-xl"] {
+  border-radius: 16px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   MODO CLARO — asegurar consistencia
+═══════════════════════════════════════════════════════════════════ */
+
+html.light .bg-zinc-950 {
+  background-color: hsl(var(--card)) !important;
+}
+
+html.light .bg-zinc-900 {
+  background-color: hsl(var(--secondary)) !important;
+}
+
+html.light .border-zinc-800 {
+  border-color: hsl(var(--border)) !important;
+}
+
+html.light .text-zinc-400,
+html.light .text-zinc-500,
+html.light .text-zinc-600 {
+  color: hsl(var(--muted-foreground)) !important;
+}
+
+html.light tr:hover td {
+  background: rgba(0,0,0,0.02) !important;
+}
+
+html.light *::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,0.1) !important;
+}
+
+html.light *::-webkit-scrollbar-thumb:hover {
+  background: rgba(0,0,0,0.18) !important;
+}

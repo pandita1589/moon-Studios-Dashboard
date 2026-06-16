@@ -1,0 +1,75 @@
+# ══════════════════════════════════════════
+# .gitignore — moon Studios Dashboard
+# React + Vite + Tauri + Firebase
+# ══════════════════════════════════════════
+
+# ── Variables de entorno (NUNCA subir) ──
+.env
+.env.local
+.env.development
+.env.production
+.env.*.local
+
+# ── Firebase ──
+.firebase/
+firebase-debug.log*
+firebase-debug.*.log*
+.firebaserc
+
+# ── Tauri (MUY IMPORTANTE - pesa ~2GB) ──
+src-tauri/target/
+src-tauri/moonkey.key
+src-tauri/moonkey.key.pub
+
+
+src-ssr/
+
+# ── Vite / React build ──
+dist/
+dist-ssr/
+
+# ── Node ──
+node_modules/
+.npm
+.yarn-integrity
+*.tgz
+
+# ── Logs ──
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Coverage / Testing ──
+coverage/
+.nyc_output
+lib-cov
+
+# ── Cache ──
+.eslintcache
+.cache/
+*.tsbuildinfo
+.dataconnect
+
+# ── Runtime ──
+pids
+*.pid
+*.seed
+*.pid.lock
+.lock-wscript
+build/Release
+.grunt
+bower_components
+
+# ── Editor ──
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.sw?
+
+# ── Sistema operativo ──
+.DS_Store
+Thumbs.db
+desktop.ini
