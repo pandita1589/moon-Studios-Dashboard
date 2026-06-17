@@ -1,11 +1,11 @@
 {
-    "version":  "2.1.16",
+    "version":  "2.1.17",
     "notes":  "Nueva version de Moon Studios Portal Corporativo.",
-    "pub_date":  "2026-06-16T21:42:28Z",
+    "pub_date":  "2026-06-16T21:53:15Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRMDZrZG4yMDRUNDl0TDcvSGIyMHBuUE5mcnRiVHlYSzFWdXVKUUVHejhvSGNJMXhDUm1vYk1lQXZ1UHF1azFuRWFEcysvMXplOEpkWDdGVzlEOWxvdmxwL0ZtZW9yRUFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxNjY0MTQ4CWZpbGU6bW9vbiBTdHVkaW9zXzIuMS4xNl94NjQtc2V0dXAuZXhlCmRFU09zYzAraENsK2ZlRzR1QmRnVVdRSEUvLzEweU1QNDZtZ3VyMEV1VEVWZTJZdTRrcTlrL1YwWkdySXlMWnF5OXg0RVRLYUI5bG8vTkp2QUVQOENRPT0K",
-                                             "url":  "https://github.com/pandita1589/moon-Studios-Dashboard/releases/download/v2.1.16/moon%20Studios_2.1.16_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRMDZrZG4yMDRUNHdjVjU3WkVsU2poRFVRUkpyL3Z4MnRuODBCUDd4S0tnV3N3cU52NUdnWUNRN3hFcVlxVE9PVEhTcUFwRE9DTlJDYUxMeUhGV2Jibnh0eFFYZXM3a3dnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxNjY0Nzk1CWZpbGU6bW9vbiBTdHVkaW9zXzIuMS4xN194NjQtc2V0dXAuZXhlCi9ZaGl3ZlBoUVhiZGhaNmxJQyt6cGhmQ0loUG5mazQwNmxDM0xnMEdtZEY5THJQWGhDVFc0QThCYjlUT3JPR3JvSEVOUHpFVVFEayt2VC9nZE1UeENBPT0K",
+                                             "url":  "https://github.com/pandita1589/moon-Studios-Dashboard/releases/download/v2.1.17/moon%20Studios_2.1.17_x64-setup.exe"
                                          }
                   }
 }
