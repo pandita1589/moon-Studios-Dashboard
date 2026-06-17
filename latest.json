@@ -1,11 +1,11 @@
 ﻿{
-    "version":  "2.1.14",
+    "version":  "2.1.15",
     "notes":  "Nueva version de Moon Studios Portal Corporativo.",
-    "pub_date":  "2026-06-16T20:42:02Z",
+    "pub_date":  "2026-06-16T20:54:10Z",
     "platforms":  {
                       "windows-x86_64":  {
                                              "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRMDZrZG4yMDRUNHlCYWhOU0hYNnF0V1Y1MzFvS243bFhNQkFsM1NxdmpxTEtHUGt4aENoQ1R1aGJndDVkbzBXY2Q0aEJ4UVgzRVVsTW1NdTlpeGJnYTZEV2R5UDBzbWdvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxNjYwNTIyCWZpbGU6bW9vbiBTdHVkaW9zXzIuMS4xM194NjQtc2V0dXAuZXhlCjRjU3hDZTlkRjVrcWFHR01GN2VFTHZ2T0tpMHk0QWxCV2lMbm04aExFcDdjbnBvclZSNTlVTUhES2NLODhVMno0UDYvL2lVN3c5TFVXSE9ML1ZWUENRPT0K",
-                                             "url":  "https://github.com/pandita1589/moon-Studios-Dashboard/releases/download/v2.1.14/moon%20Studios_2.1.13_x64-setup.exe"
+                                             "url":  "https://github.com/pandita1589/moon-Studios-Dashboard/releases/download/v2.1.15/moon%20Studios_2.1.15_x64-setup.exe"
                                          }
                   }
 }
