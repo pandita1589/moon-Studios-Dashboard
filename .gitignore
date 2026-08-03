@@ -21,8 +21,8 @@ src-tauri/target/
 src-tauri/moonkey.key
 src-tauri/moonkey.key.pub
 
-src/
-src-ssr/
+moonStudios.key
+moonStudios.key.pub
 
 # ── Vite / React build ──
 dist/
