@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import emailjs from '@emailjs/browser';
-import { initializeApp, getApps } from 'firebase/app';
 import {
-  getFirestore, collection, doc, getDoc, setDoc, getDocs, deleteDoc,
+  collection, doc, getDoc, setDoc, getDocs, deleteDoc,
   Timestamp, updateDoc, addDoc, writeBatch,
 } from 'firebase/firestore';
 import {
@@ -53,28 +52,6 @@ const lunaFetch = async (path: string, opts: RequestInit = {}) => {
   if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
   return json;
 };
-
-// ═══════════════════════════════════════════════════════════════════
-// FIREBASE LUNA NET — inicialización segura y lazy
-// ═══════════════════════════════════════════════════════════════════
-
-function getLunaDb() {
-  const cfg = {
-     apiKey:            import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain:        import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId:         import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket:     import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId:             import.meta.env.VITE_FIREBASE_APP_ID,
-  measurementId:     import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
-  };
-  const missing = Object.entries(cfg).filter(([, v]) => !v || v === 'undefined');
-  if (missing.length > 0) {
-    throw new Error(`Variables Luna NET faltantes: ${missing.map(([k]) => k).join(', ')}`);
-  }
-  const app = getApps().find(a => a.name === 'luna') || initializeApp(cfg, 'luna');
-  return getFirestore(app);
-}
 
 // ── Supabase ─────────────────────────────────────────────────────────────────
 const supabase = createClient(
@@ -677,14 +654,12 @@ const AlliesPanel: React.FC = () => {
     setLoading(true);
     setLoadError(null);
     try {
-      const lunaDb = getLunaDb();
-      const snap   = await withTimeout(
-        getDocs(collection(lunaDb, 'allies')),
+      const json = await withTimeout(
+        lunaFetch('/api/bot/allies'),
         TIMEOUTS.LOAD,
-        'getDocs allies',
+        'GET /api/bot/allies',
       );
-      const data = snap.docs
-        .map(d => ({ id: d.id, ...d.data() } as AllyData))
+      const data: AllyData[] = ((json.data ?? []) as AllyData[])
         .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
       setAllies(data);
     } catch (e: unknown) {
@@ -729,28 +704,22 @@ const AlliesPanel: React.FC = () => {
     if (!form.name.trim()) { toast.error('El nombre es obligatorio'); return; }
     setSaving(true);
     try {
-      const lunaDb    = getLunaDb();
-      const alliesCol = collection(lunaDb, 'allies');
-      const now       = new Date().toISOString();
-
       if (editingId) {
-        await withTimeout(
-          updateDoc(doc(lunaDb, 'allies', editingId), { ...form, updatedAt: now }),
+        const json = await withTimeout(
+          lunaFetch(`/api/bot/allies/${editingId}`, { method: 'PATCH', body: JSON.stringify(form) }),
           TIMEOUTS.SAVE,
-          'updateDoc ally',
+          'PATCH ally',
         );
-        setAllies(prev =>
-          prev.map(a => a.id === editingId ? { ...a, ...form, id: editingId } : a)
-        );
+        setAllies(prev => prev.map(a => a.id === editingId ? (json.data as AllyData) : a));
         toast.success('Aliado actualizado ✓');
       } else {
-        const ref = await withTimeout(
-          addDoc(alliesCol, { ...form, createdAt: now, updatedAt: now }),
+        const json = await withTimeout(
+          lunaFetch('/api/bot/allies', { method: 'POST', body: JSON.stringify(form) }),
           TIMEOUTS.SAVE,
-          'addDoc ally',
+          'POST ally',
         );
         setAllies(prev =>
-          [...prev, { id: ref.id, ...form }].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+          [...prev, json.data as AllyData].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
         );
         toast.success('Aliado creado ✓');
       }
@@ -766,11 +735,10 @@ const AlliesPanel: React.FC = () => {
   const handleDelete = async (id: string, name: string) => {
     if (!confirm(`¿Eliminar a "${name}"?`)) return;
     try {
-      const lunaDb = getLunaDb();
       await withTimeout(
-        deleteDoc(doc(lunaDb, 'allies', id)),
+        lunaFetch(`/api/bot/allies/${id}`, { method: 'DELETE' }),
         TIMEOUTS.DELETE,
-        'deleteDoc ally',
+        'DELETE ally',
       );
       setAllies(prev => prev.filter(a => a.id !== id));
       if (editingId === id) cancelForm();
@@ -786,9 +754,8 @@ const AlliesPanel: React.FC = () => {
     // Optimistic update
     setAllies(prev => prev.map(a => a.id === ally.id ? { ...a, active: newVal } : a));
     try {
-      const lunaDb = getLunaDb();
       await withTimeout(
-        updateDoc(doc(lunaDb, 'allies', ally.id), { active: newVal }),
+        lunaFetch(`/api/bot/allies/${ally.id}`, { method: 'PATCH', body: JSON.stringify({ active: newVal }) }),
         TIMEOUTS.SAVE,
         'toggleActive',
       );
@@ -817,11 +784,14 @@ const AlliesPanel: React.FC = () => {
     });
 
     try {
-      const lunaDb = getLunaDb();
-      const batch  = writeBatch(lunaDb);
-      batch.update(doc(lunaDb, 'allies', ally.id),   { order: target.order });
-      batch.update(doc(lunaDb, 'allies', target.id), { order: ally.order });
-      await withTimeout(batch.commit(), TIMEOUTS.BATCH, 'batch moveOrder');
+      await withTimeout(
+        Promise.all([
+          lunaFetch(`/api/bot/allies/${ally.id}`,   { method: 'PATCH', body: JSON.stringify({ order: target.order }) }),
+          lunaFetch(`/api/bot/allies/${target.id}`, { method: 'PATCH', body: JSON.stringify({ order: ally.order }) }),
+        ]),
+        TIMEOUTS.BATCH,
+        'moveOrder',
+      );
     } catch (e: unknown) {
       // Revert
       await loadAllies();
