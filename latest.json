@@ -1,11 +1,11 @@
 {
-    "version":  "2.1.36",
-    "notes":  "Nueva pestaña Legal Luna en Webs: edita privacidad, términos y cookies de Luna NET por separado.",
-    "pub_date":  "2026-09-29T21:32:14Z",
+    "version":  "2.1.37",
+    "notes":  "Discord Bot: muestra el error real si la API no responde y arregla el link de invitación. La app de escritorio ya se conecta a la API de Luna NET.",
+    "pub_date":  "2026-09-29T21:49:04Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRMDZrZG4yMDRUNDhyQms3WGJQVWRxcXJwSG9udnlXdFFxZml6ZEZlNzFCaVBwa2JTUGJXNldWejlOY281Z2RldjN5d3gwLzRVRnJjWVNUQ3drNktURUJBU1JEUDcyOGdFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNzM1NTMzCWZpbGU6bW9vbiBTdHVkaW9zXzIuMS4zNl94NjQtc2V0dXAuZXhlClA1clJkc3M1Unk3K0hzMmwyNFJDaVhCMGhkLzFOYXQydmxYcjRZdmx2YmdFYU9CditzTElTWk1NQWVxcWh2VjFRQlBaZVN4Z2tEalJuazZUbnNLZkFBPT0K",
-                                             "url":  "https://github.com/pandita1589/moon-Studios-Dashboard/releases/download/v2.1.36/moon.Studios_2.1.36_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRMDZrZG4yMDRUNDltTG5wR1JCdThiakFKYVZxYUZDenJSQjFreXJMcE5YTk9wSktkUmZkYmRJUzBaZXdKUnlRRXZpNEtlUXQvazBWWno2dVFNc1lwQTQ1THB2Uno4U1FRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNzM2NTQzCWZpbGU6bW9vbiBTdHVkaW9zXzIuMS4zN194NjQtc2V0dXAuZXhlClhONStKcElpbjdPM1hGaXNOTk5CbHBKdUtXVmdkc2tTc2p2VFk2RmYybnp5b1FGS1IySFBYRExCcFJoYzdPeE9CYWcxcGgwcEJIQXo5L3l4akJwd0JBPT0K",
+                                             "url":  "https://github.com/pandita1589/moon-Studios-Dashboard/releases/download/v2.1.37/moon.Studios_2.1.37_x64-setup.exe"
                                          }
                   }
 }
