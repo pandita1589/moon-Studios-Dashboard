@@ -1,11 +1,11 @@
 {
-    "version":  "2.1.35",
-    "notes":  "Nueva version de Moon Studios Portal Corporativo.",
-    "pub_date":  "2026-07-04T21:51:21Z",
+    "version":  "2.1.36",
+    "notes":  "Nueva pestaña Legal Luna en Webs: edita privacidad, términos y cookies de Luna NET por separado.",
+    "pub_date":  "2026-09-29T21:32:14Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRMDZrZG4yMDRUNHhNZGRLempWWWpuM0lJK21GRjRNOTdrZmxNREdaTEtvcm9uZkNEVjVxRDcvNE1yaE94ZHA0NnhCY0c0Yko5VUhDaU4wMThzWGJEcHNLQTM0SzNZMVFrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMjE5ODgxCWZpbGU6bW9vbiBTdHVkaW9zXzIuMS4zNV94NjQtc2V0dXAuZXhlCndHRFZKdlJLL2U0dUJPZUZ0MzBPTXVTaTQ5NCsraTZHRmhQTy9XYTdmbVEwZ0JFWlQ5Uzd2dVhCNmxSUXRDMlh0YWhVRkxMdThQYzNySS9OVUVUUER3PT0K",
-                                             "url":  "https://github.com/pandita1589/moon-Studios-Dashboard/releases/download/v2.1.35/moon.Studios_2.1.35_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRMDZrZG4yMDRUNDhyQms3WGJQVWRxcXJwSG9udnlXdFFxZml6ZEZlNzFCaVBwa2JTUGJXNldWejlOY281Z2RldjN5d3gwLzRVRnJjWVNUQ3drNktURUJBU1JEUDcyOGdFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNzM1NTMzCWZpbGU6bW9vbiBTdHVkaW9zXzIuMS4zNl94NjQtc2V0dXAuZXhlClA1clJkc3M1Unk3K0hzMmwyNFJDaVhCMGhkLzFOYXQydmxYcjRZdmx2YmdFYU9CditzTElTWk1NQWVxcWh2VjFRQlBaZVN4Z2tEalJuazZUbnNLZkFBPT0K",
+                                             "url":  "https://github.com/pandita1589/moon-Studios-Dashboard/releases/download/v2.1.36/moon.Studios_2.1.36_x64-setup.exe"
                                          }
                   }
 }
