@@ -1,11 +1,11 @@
 {
-    "version":  "2.1.38",
-    "notes":  "El CEO ve todos los paneles. Registro de actividad unificado, notificaciones de Hilos y Mensajeria, Usuarios sin cerrar sesion, Proyectos y Programacion sincronizados, Contador corregido y avisos visibles.",
-    "pub_date":  "2026-09-29T22:26:53Z",
+    "version":  "2.1.39",
+    "notes":  "Todo sincronizado en vivo: Contador, Calendario, Anuncios, Mensajeria y Panel CEO. Correo con papelera y destacados por persona. Crear tareas desde el Calendario.",
+    "pub_date":  "2026-09-29T22:43:31Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRMDZrZG4yMDRUNDNIZWk0MkFWTlNPQ1pINWUvTks2VkdIampiZlZGdUZzYjJQU2gxSDE5Z1FuTGpDWjl3NXVvbGN6Yk40dHdmWnJZa3B3UDN0V0JuZGtLR2QwQWFITGdjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNzM4ODEzCWZpbGU6bW9vbiBTdHVkaW9zXzIuMS4zOF94NjQtc2V0dXAuZXhlCmQ3aWpoR1dWbnQ2bi9LbjhrSHgrSVphVks4QnN3Y0xROE12RGZQTUlIMkhIcEpoenN5YlZrSFppTE1kcmpxOEdmTzMwZXlnR1lENi9wSXNIZEhNTkFBPT0K",
-                                             "url":  "https://github.com/pandita1589/moon-Studios-Dashboard/releases/download/v2.1.38/moon.Studios_2.1.38_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRMDZrZG4yMDRUNDdqU3FUNzhMMmQ3NVRBWEZqTitGSGwvWHRkTk9rWnVFdlhXQ0NmalY2T3A2aWJzYVR6UXdCOUJMNURJKzl5WmNHYmRnYzFHTzJCMlAzaVVQc3FxY3dzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNzM5ODEwCWZpbGU6bW9vbiBTdHVkaW9zXzIuMS4zOV94NjQtc2V0dXAuZXhlCnNGcERnU1VFbC9hRWxlV3hQMGI2cFpxR1pmUnVuU1VtVFhVemtsdHB2eWRVZFpQQ1lGUVEvV1NMQmFDbWFyUlR3R2JoT2xLTE1NNXNDRU5yUXJDUkN3PT0K",
+                                             "url":  "https://github.com/pandita1589/moon-Studios-Dashboard/releases/download/v2.1.39/moon.Studios_2.1.39_x64-setup.exe"
                                          }
                   }
 }
