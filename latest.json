@@ -1,11 +1,11 @@
 {
-    "version":  "2.1.37",
-    "notes":  "Discord Bot: muestra el error real si la API no responde y arregla el link de invitación. La app de escritorio ya se conecta a la API de Luna NET.",
-    "pub_date":  "2026-09-29T21:49:04Z",
+    "version":  "2.1.38",
+    "notes":  "El CEO ve todos los paneles. Registro de actividad unificado, notificaciones de Hilos y Mensajeria, Usuarios sin cerrar sesion, Proyectos y Programacion sincronizados, Contador corregido y avisos visibles.",
+    "pub_date":  "2026-09-29T22:26:53Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRMDZrZG4yMDRUNDltTG5wR1JCdThiakFKYVZxYUZDenJSQjFreXJMcE5YTk9wSktkUmZkYmRJUzBaZXdKUnlRRXZpNEtlUXQvazBWWno2dVFNc1lwQTQ1THB2Uno4U1FRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNzM2NTQzCWZpbGU6bW9vbiBTdHVkaW9zXzIuMS4zN194NjQtc2V0dXAuZXhlClhONStKcElpbjdPM1hGaXNOTk5CbHBKdUtXVmdkc2tTc2p2VFk2RmYybnp5b1FGS1IySFBYRExCcFJoYzdPeE9CYWcxcGgwcEJIQXo5L3l4akJwd0JBPT0K",
-                                             "url":  "https://github.com/pandita1589/moon-Studios-Dashboard/releases/download/v2.1.37/moon.Studios_2.1.37_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRMDZrZG4yMDRUNDNIZWk0MkFWTlNPQ1pINWUvTks2VkdIampiZlZGdUZzYjJQU2gxSDE5Z1FuTGpDWjl3NXVvbGN6Yk40dHdmWnJZa3B3UDN0V0JuZGtLR2QwQWFITGdjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNzM4ODEzCWZpbGU6bW9vbiBTdHVkaW9zXzIuMS4zOF94NjQtc2V0dXAuZXhlCmQ3aWpoR1dWbnQ2bi9LbjhrSHgrSVphVks4QnN3Y0xROE12RGZQTUlIMkhIcEpoenN5YlZrSFppTE1kcmpxOEdmTzMwZXlnR1lENi9wSXNIZEhNTkFBPT0K",
+                                             "url":  "https://github.com/pandita1589/moon-Studios-Dashboard/releases/download/v2.1.38/moon.Studios_2.1.38_x64-setup.exe"
                                          }
                   }
 }
