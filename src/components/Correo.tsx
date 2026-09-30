@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAllUsers } from '@/lib/firebase';
 import { db } from '@/lib/firebase';
 import { supabase } from '@/lib/supabaseclient';
 import {
   collection, addDoc, updateDoc, deleteDoc, doc,
-  onSnapshot, query, where, orderBy, Timestamp,
+  onSnapshot, query, where, orderBy, Timestamp, arrayUnion, arrayRemove
 } from 'firebase/firestore';
 import {  AnimatePresence } from 'framer-motion';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -26,7 +27,18 @@ interface Correo {
   attachments: Attachment[]; createdAt: any; read: boolean; starred: boolean;
   deleted: boolean; deletedBy?: string; draft: boolean; replyToId?: string;
   replyToSubject?: string; forwarded?: boolean;
+  // Estado por persona (antes era uno solo para los dos: si el destinatario
+  // borraba o destacaba un correo, también cambiaba para el remitente).
+  starredBy?: string[]; trashedBy?: string[]; purgedBy?: string[];
+  // Un borrador guarda su destinatario acá y deja toUid vacío: con toUid el
+  // borrador ya le llegaba al destinatario (su escucha lo recibía).
+  draftToUid?: string;
 }
+
+/* ── Estado por persona, compatible con los correos viejos ── */
+const destacado  = (m: Correo, uid: string) => m.starredBy ? m.starredBy.includes(uid) : !!m.starred;
+const enPapelera = (m: Correo, uid: string) => m.trashedBy ? m.trashedBy.includes(uid) : (!!m.deleted && m.deletedBy === uid);
+const borradoDef = (m: Correo, uid: string) => !!m.purgedBy?.includes(uid);
 type Folder = 'inbox' | 'sent' | 'drafts' | 'trash' | 'starred';
 
 const CORREOS_BUCKET = 'correos';
@@ -82,7 +94,7 @@ const CorreoComponent: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const userDropdownRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { getAllUsers().then(d => setUsers(d as UserProfile[])); }, []);
+  useEffect(() => { getAllUsers().then(d => setUsers(d as UserProfile[])).catch(e => console.error('usuarios:', e)); }, []);
 
   useEffect(() => {
     if (!uid) return;
@@ -96,8 +108,9 @@ const CorreoComponent: React.FC = () => {
     };
     const qIn = query(collection(db, 'correos'), where('toUid', '==', uid), orderBy('createdAt', 'desc'));
     const qOut = query(collection(db, 'correos'), where('fromUid', '==', uid), orderBy('createdAt', 'desc'));
-    const u1 = onSnapshot(qIn, snap => { setCorreos(p => merge(p, snap.docs.map(d => ({ id: d.id, ...d.data() } as Correo)))); setLoading(false); });
-    const u2 = onSnapshot(qOut, snap => { setCorreos(p => merge(p, snap.docs.map(d => ({ id: d.id, ...d.data() } as Correo)))); setLoading(false); });
+    const alFallar = (e: Error) => { console.error('correos:', e); toast.error('No se pudieron cargar los correos'); setLoading(false); };
+    const u1 = onSnapshot(qIn, snap => { setCorreos(p => merge(p, snap.docs.map(d => ({ id: d.id, ...d.data() } as Correo)))); setLoading(false); }, alFallar);
+    const u2 = onSnapshot(qOut, snap => { setCorreos(p => merge(p, snap.docs.map(d => ({ id: d.id, ...d.data() } as Correo)))); setLoading(false); }, alFallar);
     return () => { u1(); u2(); };
   }, [uid]);
 
@@ -127,11 +140,14 @@ const CorreoComponent: React.FC = () => {
   }, [correos]);
 
   const folderMails = correos.filter(m => {
-    if (activeFolder === 'inbox') return m.toUid === uid && !m.deleted && !m.draft;
-    if (activeFolder === 'sent') return m.fromUid === uid && !m.deleted && !m.draft;
-    if (activeFolder === 'drafts') return m.fromUid === uid && m.draft && !m.deleted;
-    if (activeFolder === 'trash') return m.deletedBy === uid && m.deleted;
-    if (activeFolder === 'starred') return (m.toUid === uid || m.fromUid === uid) && m.starred && !m.deleted;
+    if (!uid || borradoDef(m, uid)) return false;
+    const papelera = enPapelera(m, uid);
+    if (activeFolder === 'trash') return papelera;
+    if (papelera) return false;
+    if (activeFolder === 'inbox') return m.toUid === uid && !m.draft;
+    if (activeFolder === 'sent') return m.fromUid === uid && !m.draft;
+    if (activeFolder === 'drafts') return m.fromUid === uid && m.draft;
+    if (activeFolder === 'starred') return (m.toUid === uid || m.fromUid === uid) && !m.draft && destacado(m, uid);
     return false;
   }).filter(m => {
     if (!searchQuery) return true;
@@ -140,8 +156,9 @@ const CorreoComponent: React.FC = () => {
       m.fromName?.toLowerCase().includes(q) || m.toName?.toLowerCase().includes(q);
   });
 
-  const unreadCount = correos.filter(m => m.toUid === uid && !m.read && !m.deleted && !m.draft).length;
-  const draftCount = correos.filter(m => m.fromUid === uid && m.draft && !m.deleted).length;
+  const visible = (m: Correo) => !!uid && !enPapelera(m, uid) && !borradoDef(m, uid);
+  const unreadCount = correos.filter(m => m.toUid === uid && !m.read && !m.draft && visible(m)).length;
+  const draftCount = correos.filter(m => m.fromUid === uid && m.draft && visible(m)).length;
 
   useEffect(() => {
     if (unreadCount > prevUnreadRef.current) {
@@ -161,7 +178,15 @@ const CorreoComponent: React.FC = () => {
 
   const toggleStar = async (mail: Correo, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    await updateDoc(doc(db, 'correos', mail.id), { starred: !mail.starred });
+    if (!uid) return;
+    const ya = destacado(mail, uid);
+    try {
+      await updateDoc(doc(db, 'correos', mail.id), {
+        starredBy: ya ? arrayRemove(uid) : arrayUnion(uid),
+        // El flag viejo era compartido: se apaga para que no marque al otro.
+        ...(mail.starredBy ? {} : { starred: false }),
+      });
+    } catch (err) { console.error(err); toast.error('No se pudo destacar el correo'); }
   };
 
   const getSupabasePath = (url: string) => {
@@ -169,40 +194,63 @@ const CorreoComponent: React.FC = () => {
     catch { return ''; }
   };
 
+  // ¿Algún otro correo cargado usa este adjunto? (reenvíos comparten la URL)
+  const adjuntoEnUso = (url: string, salvo: Set<string>) =>
+    correos.some(m => !salvo.has(m.id) && m.attachments?.some(a => a.url === url));
+
+  // Borrado definitivo, solo para ti. El documento (y sus adjuntos) se
+  // elimina de verdad cuando la otra persona también lo borró.
+  const borrarDefinitivo = async (mails: Correo[]) => {
+    if (!uid) return;
+    const eliminados = new Set<string>();
+    for (const mail of mails) {
+      const otro = mail.fromUid === uid ? mail.toUid : mail.fromUid;
+      const otroYaLoBorro = !otro || otro === uid || !!mail.purgedBy?.includes(otro) || mail.draft;
+      try {
+        if (otroYaLoBorro) {
+          const paths = (mail.attachments ?? [])
+            .filter(a => !adjuntoEnUso(a.url, new Set([mail.id, ...eliminados])))
+            .map(a => getSupabasePath(a.url)).filter(Boolean);
+          if (paths.length > 0) await supabase.storage.from(CORREOS_BUCKET).remove(paths);
+          await deleteDoc(doc(db, 'correos', mail.id));
+          eliminados.add(mail.id);
+        } else {
+          await updateDoc(doc(db, 'correos', mail.id), { purgedBy: arrayUnion(uid) });
+        }
+      } catch (err) { console.error(err); toast.error('No se pudo eliminar un correo'); }
+    }
+    if (eliminados.size) setCorreos(p => p.filter(m => !eliminados.has(m.id)));
+  };
+
   const deleteMail = async (mail: Correo) => {
-    if (mail.deleted) {
+    if (!uid) return;
+    if (enPapelera(mail, uid)) {
       if (!confirm('¿Eliminar permanentemente?')) return;
-      if (mail.attachments?.length > 0) {
-        const paths = mail.attachments.map(a => getSupabasePath(a.url)).filter(Boolean);
-        if (paths.length > 0) await supabase.storage.from(CORREOS_BUCKET).remove(paths);
-      }
-      await deleteDoc(doc(db, 'correos', mail.id));
-      setCorreos(p => p.filter(m => m.id !== mail.id));
+      await borrarDefinitivo([mail]);
     } else {
-      await updateDoc(doc(db, 'correos', mail.id), { deleted: true, deletedBy: uid });
-      setCorreos(p => p.map(m => m.id === mail.id ? { ...m, deleted: true, deletedBy: uid } : m));
+      try {
+        await updateDoc(doc(db, 'correos', mail.id), { trashedBy: arrayUnion(uid) });
+      } catch (err) { console.error(err); toast.error('No se pudo mover a la papelera'); }
     }
     setSelectedMail(null);
     setMobileView('list');
   };
 
   const restoreMail = async (mail: Correo) => {
-    await updateDoc(doc(db, 'correos', mail.id), { deleted: false, deletedBy: null });
+    if (!uid) return;
+    try {
+      await updateDoc(doc(db, 'correos', mail.id), {
+        trashedBy: arrayRemove(uid),
+        ...(mail.deleted && mail.deletedBy === uid ? { deleted: false, deletedBy: null } : {}),
+      });
+    } catch (err) { console.error(err); toast.error('No se pudo restaurar el correo'); }
   };
 
   const emptyTrash = async () => {
-    const trash = correos.filter(m => m.deletedBy === uid && m.deleted);
+    if (!uid) return;
+    const trash = correos.filter(m => enPapelera(m, uid) && !borradoDef(m, uid));
     if (!trash.length || !confirm(`¿Eliminar permanentemente ${trash.length} correo(s)?`)) return;
-    const ids = new Set<string>();
-    for (const mail of trash) {
-      if (mail.attachments?.length > 0) {
-        const paths = mail.attachments.map(a => getSupabasePath(a.url)).filter(Boolean);
-        if (paths.length > 0) await supabase.storage.from(CORREOS_BUCKET).remove(paths);
-      }
-      await deleteDoc(doc(db, 'correos', mail.id));
-      ids.add(mail.id);
-    }
-    setCorreos(p => p.filter(m => !ids.has(m.id)));
+    await borrarDefinitivo(trash);
     setSelectedMail(null);
   };
 
@@ -235,6 +283,8 @@ const CorreoComponent: React.FC = () => {
       if (!error) {
         const { data } = supabase.storage.from(CORREOS_BUCKET).getPublicUrl(path);
         newAtts.push({ url: data.publicUrl, name: c.name, type: c.type, size: c.size });
+      } else {
+        toast.error(`No se pudo adjuntar ${file.name}: ${error.message}`);
       }
     }
     setComposeAttachments(p => [...p, ...newAtts]);
@@ -249,7 +299,9 @@ const CorreoComponent: React.FC = () => {
     try {
       const payload = {
         fromUid: uid, fromName: userProfile?.displayName || '', fromAvatar: userProfile?.avatar || '',
-        fromRole: userProfile?.role || '', toUid: composeTo?.uid || '', toName: composeTo?.displayName || '',
+        fromRole: userProfile?.role || '',
+        toUid: asDraft ? '' : composeTo?.uid || '', draftToUid: asDraft ? composeTo?.uid || '' : '',
+        toName: composeTo?.displayName || '',
         toAvatar: composeTo?.avatar || '', subject: composeSubject, body: composeBody,
         attachments: composeAttachments, createdAt: Timestamp.now(), read: false, starred: false,
         deleted: false, draft: asDraft, forwarded: false,
@@ -264,7 +316,7 @@ const CorreoComponent: React.FC = () => {
   const resetCompose = () => { setComposeTo(null); setComposeSubject(''); setComposeBody(''); setComposeAttachments([]); setUserSearch(''); setEditingDraftId(null); };
   const openReply = (mail: Correo) => { setComposeTo(users.find(u => u.uid === mail.fromUid) || null); setComposeSubject(`Re: ${mail.subject}`); setComposeBody(`\n\n--- Mensaje original de ${mail.fromName} ---\n${mail.body}`); setComposeAttachments([]); setEditingDraftId(null); setShowCompose(true); };
   const openForward = (mail: Correo) => { setComposeTo(null); setComposeSubject(`Fwd: ${mail.subject}`); setComposeBody(`\n\n--- Reenviado de ${mail.fromName} ---\n${mail.body}`); setComposeAttachments(mail.attachments || []); setEditingDraftId(null); setShowCompose(true); };
-  const openDraft = (mail: Correo) => { setComposeTo(users.find(u => u.uid === mail.toUid) || null); setComposeSubject(mail.subject); setComposeBody(mail.body); setComposeAttachments(mail.attachments || []); setEditingDraftId(mail.id); setShowCompose(true); };
+  const openDraft = (mail: Correo) => { setComposeTo(users.find(u => u.uid === (mail.draftToUid || mail.toUid)) || null); setComposeSubject(mail.subject); setComposeBody(mail.body); setComposeAttachments(mail.attachments || []); setEditingDraftId(mail.id); setShowCompose(true); };
   const handleDownload = async (att: Attachment) => {
     const res = await fetch(att.url); const blob = await res.blob();
     const url = URL.createObjectURL(blob); const a = document.createElement('a');
@@ -704,7 +756,7 @@ const CorreoComponent: React.FC = () => {
                           </p>
                           <div className="flex items-center gap-2 mt-1">
                             {isUnread && <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: 'var(--correo-unread-dot)' }} />}
-                            {mail.starred && <Star className="w-3 h-3 text-yellow-400 fill-yellow-400" />}
+                            {uid && destacado(mail, uid) && <Star className="w-3 h-3 text-yellow-400 fill-yellow-400" />}
                             {mail.attachments?.length > 0 && <Paperclip className="w-3 h-3" style={{ color: 'var(--correo-text-muted)' }} />}
                             {mail.forwarded && <Forward className="w-3 h-3" style={{ color: 'var(--correo-text-muted)' }} />}
                           </div>
@@ -736,7 +788,7 @@ const CorreoComponent: React.FC = () => {
                 <div className="flex-1" />
                 {/* Action buttons */}
                 {[
-                  { icon: Star, color: selectedMail.starred ? '#facc15' : 'var(--correo-text-secondary)', fn: () => toggleStar(selectedMail), title: 'Destacar' },
+                  { icon: Star, color: (uid && destacado(selectedMail, uid)) ? '#facc15' : 'var(--correo-text-secondary)', fn: () => toggleStar(selectedMail), title: 'Destacar' },
                   { icon: Reply, color: 'var(--correo-text-secondary)', fn: () => openReply(selectedMail), title: 'Responder' },
                   { icon: Forward, color: 'var(--correo-text-secondary)', fn: () => openForward(selectedMail), title: 'Reenviar' },
                   ...(activeFolder === 'trash' ? [{ icon: RefreshCw, color: 'var(--correo-text-secondary)', fn: () => restoreMail(selectedMail), title: 'Restaurar' }] : []),
@@ -744,7 +796,7 @@ const CorreoComponent: React.FC = () => {
                   <button key={i} onClick={fn} title={title}
                     className="correo-folder-btn w-7 h-7 rounded-lg flex items-center justify-center"
                     style={{ color, background: 'transparent', border: 'none' }}>
-                    <Icon className="w-3.5 h-3.5" strokeWidth={1.5} style={{ fill: Icon === Star && selectedMail.starred ? '#facc15' : 'none' }} />
+                    <Icon className="w-3.5 h-3.5" strokeWidth={1.5} style={{ fill: Icon === Star && (uid && destacado(selectedMail, uid)) ? '#facc15' : 'none' }} />
                   </button>
                 ))}
                 <button onClick={() => deleteMail(selectedMail)}

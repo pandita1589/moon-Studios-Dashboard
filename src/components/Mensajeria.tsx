@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  collection, doc, getDocs, updateDoc, deleteDoc, writeBatch, Timestamp,
+  collection, doc, onSnapshot, updateDoc, deleteDoc, writeBatch, Timestamp,
 } from 'firebase/firestore';
 import {
   MessagesSquare, Mail, MailOpen, Search, RefreshCw, Trash2, ChevronDown,
@@ -167,24 +167,23 @@ const Mensajeria: React.FC = () => {
   const [replyText,    setReplyText]    = useState('');
   const [sendingReply, setSendingReply] = useState(false);
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const snap = await getDocs(CORREOS_COL);
-      const data = snap.docs
-        .map(d => ({ id: d.id, ...d.data() } as Correo))
-        .sort((a, b) => (b.fecha?.seconds ?? 0) - (a.fecha?.seconds ?? 0));
-      setCorreos(data);
-    } catch (e) {
-      console.error('Error cargando correos:', e);
-      setError('No se pudieron cargar los correos. Revisá tu conexión o tus permisos.');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  // En vivo: un mensaje nuevo desde las webs aparece sin tocar "Actualizar".
+  // El botón vuelve a suscribirse, por si la escucha falló.
+  const [intento, setIntento] = useState(0);
+  const loadData = useCallback(async () => { setLoading(true); setError(null); setIntento(n => n + 1); }, []);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => onSnapshot(CORREOS_COL, snap => {
+    const data = snap.docs
+      .map(d => ({ id: d.id, ...d.data() } as Correo))
+      .sort((a, b) => (b.fecha?.seconds ?? 0) - (a.fecha?.seconds ?? 0));
+    setCorreos(data);
+    setError(null);
+    setLoading(false);
+  }, e => {
+    console.error('Error cargando correos:', e);
+    setError('No se pudieron cargar los correos. Revisa tu conexión o tus permisos.');
+    setLoading(false);
+  }), [intento]);
 
   const stats = useMemo(() => ({
     total:    correos.length,

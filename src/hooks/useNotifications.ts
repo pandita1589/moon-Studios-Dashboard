@@ -199,6 +199,11 @@ export function useNotifications({
     );
     const unsub = onSnapshot(q, snap => {
       const items: UnifiedNotification[] = snap.docs
+        // La papelera y el borrado ahora son por persona (Correo.tsx).
+        .filter(doc => {
+          const d = doc.data();
+          return !(d.trashedBy ?? []).includes(uid) && !(d.purgedBy ?? []).includes(uid);
+        })
         .map(doc => {
           const d = doc.data();
           return {

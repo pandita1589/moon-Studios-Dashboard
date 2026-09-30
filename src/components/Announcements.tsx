@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { getAnnouncements, createAnnouncement, deleteAnnouncement } from '@/lib/firebase';
+import { subscribeToAnnouncements, createAnnouncement, deleteAnnouncement } from '@/lib/firebase';
 import { Megaphone, Plus, Trash2, AlertCircle, Calendar, X, Pin, ChevronDown, Sparkles, Bell } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -513,20 +513,23 @@ const Announcements: React.FC = () => {
   const [modalOpen,     setModalOpen]     = useState(false);
   const [filter,        setFilter]        = useState<'all' | 'important'>('all');
 
-  const load = useCallback(async () => {
-    try {
-      const data = await getAnnouncements();
+  // En vivo: antes la lista se leía una vez, así que la campana avisaba de un
+  // anuncio nuevo que esta página no mostraba hasta recargar. `load` queda
+  // para los llamados que ya había; la escucha ya trae los cambios.
+  const load = useCallback(async () => {}, []);
+
+  useEffect(() => subscribeToAnnouncements(
+    data => {
       setAnnouncements(
         data.map((a: any) => ({
           ...a,
           createdAt: a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt || 0),
         })) as Announcement[]
       );
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
+      setLoading(false);
+    },
+    e => { console.error(e); setLoading(false); },
+  ), []);
 
   const handleDelete = useCallback(async (id: string) => {
     if (!canEdit) return;

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSettings } from '@/contexts/SettingsContext';
 import EmployeeProfileModal   from '@/components/EmployeeProfileModal';
@@ -6,12 +7,12 @@ import EmployeeCredentialModal from '@/components/EmployeeCredentialModal';
 import BarcodeScannerModal    from '@/components/BarcodeScannerModal';
 import EmployeeContractModal  from '@/components/EmployeeContractModal';
 import { 
-  getAllUsers, createTask, deleteTask, 
-  getTasks, logActivity, updateUserProfile,
+  subscribeToUsers, subscribeToTasks, createTask, deleteTask,
+  logActivity, updateUserProfile,
   deleteUserData, createUserWithRole
 } from '@/lib/firebase';
 import { supabase, REPORTS_BUCKET } from '@/lib/supabaseclient';
-import { collection, getDocs, query, orderBy, doc, deleteDoc, writeBatch, addDoc, getDoc, setDoc } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, onSnapshot, doc, deleteDoc, writeBatch, addDoc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -73,6 +74,7 @@ interface TaskReport {
   userRole: string;
   status: 'completed' | 'in-progress' | 'not-completed';
   comment: string;
+  reason?: string;
   files: { url: string; name: string; type: string; size?: number }[];
   createdAt: any;
   reportPath?: string;
@@ -95,6 +97,21 @@ const ordenarBanners = <T extends { orden?: number; creadoEn?: { toMillis?: () =
     if (oa !== ob) return oa - ob;
     return (b.creadoEn?.toMillis?.() ?? 0) - (a.creadoEn?.toMillis?.() ?? 0);
   });
+
+// Un documento de taskReports con la forma que usa este panel. Incluye el
+// motivo (reason) de "no completado", que antes se perdía al leerlo.
+function aReporte(id: string, data: Record<string, unknown>): TaskReport {
+  const adj = Array.isArray(data.attachments) ? data.attachments as { url?: string; name?: string; type?: string; size?: number }[] : [];
+  return {
+    id, taskId: String(data.taskId || ''), taskTitle: String(data.taskTitle || ''),
+    userId: String(data.reportedBy || ''), userName: String(data.reporterName || ''),
+    userRole: String(data.reporterRole || ''), status: (data.reportStatus as TaskReport['status']) || 'in-progress',
+    comment: String(data.comment || ''), reason: data.reason ? String(data.reason) : undefined,
+    files: adj.map(a => ({ url: a.url || '', name: a.name || 'archivo', type: a.type || 'application/octet-stream', size: a.size || 0 })),
+    createdAt: data.createdAt,
+    reportPath: `${data.taskId}/${data.reportedBy}`,
+  };
+}
 
 /* ─── CONSTANTES ─── */
 const passwordRules = [
@@ -218,11 +235,14 @@ const CEOPanel: React.FC = () => {
 
 
   /* ── Estado ── */
+  // Desde el Calendario ("Crear tarea este día") llega la fecha de la tarea nueva.
+  const location = useLocation();
+  const fechaNuevaTarea = (location.state as { nuevaTarea?: string } | null)?.nuevaTarea;
   const [users,           setUsers]           = useState<UserProfile[]>([]);
   const [tasks,           setTasks]           = useState<any[]>([]);
   const [loading,         setLoading]         = useState(true);
   const [searchUser,      setSearchUser]      = useState('');
-  const [showAddTask,     setShowAddTask]      = useState(false);
+  const [showAddTask,     setShowAddTask]      = useState(!!fechaNuevaTarea);
   const [showAddUser,     setShowAddUser]      = useState(false);
   const [isCreatingUser,  setIsCreatingUser]   = useState(false);
   const [isDeletingUser,  setIsDeletingUser]   = useState<string | null>(null);
@@ -252,7 +272,7 @@ const CEOPanel: React.FC = () => {
     title: '', description: '', assignedTo: '',
     assignedToRole: '' as UserRole | '',
     priority: 'medium' as 'low' | 'medium' | 'high',
-    dueDate: ''
+    dueDate: fechaNuevaTarea ?? ''
   });
   const [newUser, setNewUser] = useState<NewUserForm>({
     email: '', password: '', confirmPassword: '', displayName: '', role: 'Empleado'
@@ -294,37 +314,23 @@ const CEOPanel: React.FC = () => {
   const allRoles = Array.from(new Set([...FIXED_ROLES, ...users.map(u => u.role)])).filter(Boolean);
 
   /* ── Callbacks ── */
-  const fetchData = useCallback(async () => {
-    try {
-      const [usersData, tasksData] = await Promise.all([getAllUsers(), getTasks()]);
-      setUsers(usersData as UserProfile[]);
-      setTasks(tasksData);
-    } catch (error) { console.error('Error:', error); }
-    finally { setLoading(false); }
+  // Usuarios y tareas en vivo (lo mismo que ven Usuarios, Gestión Roles, el
+  // Inicio y el Calendario). `fetchData` queda para los llamados que ya había.
+  const fetchData = useCallback(async () => {}, []);
+  useEffect(() => {
+    let pendientes = 2;
+    const listo = () => { pendientes -= 1; if (pendientes <= 0) setLoading(false); };
+    const u1 = subscribeToUsers(u => { setUsers(u as UserProfile[]); listo(); }, e => { console.error(e); listo(); });
+    const u2 = subscribeToTasks(t => { setTasks(t); listo(); }, e => { console.error(e); listo(); });
+    return () => { u1(); u2(); };
   }, []);
 
-  const fetchReports = useCallback(async () => {
-    setReportsLoading(true);
-    try {
-      const q = query(collection(db, 'taskReports'), orderBy('createdAt', 'desc'));
-      const snap = await getDocs(q);
-      setReports(snap.docs.map(d => {
-        const data = d.data();
-        return {
-          id: d.id, taskId: data.taskId || '', taskTitle: data.taskTitle || '',
-          userId: data.reportedBy || '', userName: data.reporterName || '',
-          userRole: data.reporterRole || '', status: data.reportStatus || 'in-progress',
-          comment: data.comment || '',
-          files: Array.isArray(data.attachments)
-            ? data.attachments.map((a: any) => ({ url: a.url || '', name: a.name || 'archivo', type: a.type || 'application/octet-stream', size: a.size || 0 }))
-            : [],
-          createdAt: data.createdAt,
-          reportPath: `${data.taskId}/${data.reportedBy}`,
-        } as TaskReport;
-      }));
-    } catch (error) { console.error('Error fetching reports:', error); }
-    finally { setReportsLoading(false); }
-  }, []);
+  // Reportes en vivo: el CEO ve el reporte de un empleado apenas lo envía.
+  // `fetchReports` queda para el botón de actualizar que ya existía.
+  const fetchReports = useCallback(async () => {}, []);
+  useEffect(() => onSnapshot(query(collection(db, 'taskReports'), orderBy('createdAt', 'desc')),
+    snap => { setReports(snap.docs.map(d => aReporte(d.id, d.data()))); setReportsLoading(false); },
+    e => { console.error('Error escuchando reportes:', e); setReportsLoading(false); }), []);
 
   const fetchBanners = useCallback(async () => {
     setBannersLoading(true);
@@ -848,7 +854,7 @@ const CEOPanel: React.FC = () => {
         </div>
 
         {/* ── TABS ── */}
-        <Tabs defaultValue="employees">
+        <Tabs defaultValue={fechaNuevaTarea ? 'tasks' : 'employees'}>
           <TabsList
             className="ceo-tabs-list w-full justify-start gap-0 rounded-none border-b p-0 h-auto flex"
             style={{ background: 'transparent', borderColor }}
@@ -1984,6 +1990,15 @@ const CEOPanel: React.FC = () => {
                             <p className={`font-extralight text-sm ${cfg.color}`}>{cfg.label}</p>
                           </div>
                         </div>
+                        {selectedReport.reason && (
+                          <div>
+                            <p className="text-xs font-extralight uppercase tracking-wider mb-2" style={{ color: '#f87171' }}>Motivo de no completarla</p>
+                            <div className="p-3 sm:p-4 rounded-xl border font-extralight whitespace-pre-wrap text-sm"
+                              style={{ background: 'rgba(248,113,113,0.06)', borderColor: 'rgba(248,113,113,0.2)', color: textPrimary }}>
+                              {selectedReport.reason}
+                            </div>
+                          </div>
+                        )}
                         {selectedReport.comment && (
                           <div>
                             <p className="text-xs font-extralight uppercase tracking-wider mb-2" style={{ color: textMuted }}>Comentario / Avance</p>

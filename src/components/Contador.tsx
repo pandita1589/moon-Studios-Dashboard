@@ -4,8 +4,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getAllUsers } from '@/lib/firebase';
 import EmployeeContractModal from '@/components/EmployeeContractModal';
 import {
-  collection, addDoc, getDocs, deleteDoc, doc,
-  query, orderBy, Timestamp, updateDoc, setDoc
+  collection, addDoc, deleteDoc, doc,
+  query, orderBy, Timestamp, updateDoc, setDoc, onSnapshot
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import type { UserProfile } from '@/types';
@@ -762,54 +762,75 @@ const Contador: React.FC = () => {
   }, [monedaConfig.monedaActiva]);
 
   // ── Fetch ──
+  // ── Datos en vivo ──
+  // Antes se leía todo una vez (getDocs) y se volvía a pedir tras cada cambio:
+  // dos personas en Contador veían números distintos. Ahora cada colección se
+  // escucha en vivo; `fetchAll` solo refresca la lista de empleados (la
+  // llaman los botones que ya existían).
   const fetchAll = useCallback(async () => {
-    try {
-      const [txSnap, facSnap, presSnap, empData, sueldosSnap, configSnap, asientosSnap, libroSnap] = await Promise.all([
-        getDocs(query(collection(db, 'contabilidad_transacciones'), orderBy('fecha', 'desc'))),
-        getDocs(query(collection(db, 'contabilidad_facturas'),      orderBy('fecha', 'desc'))),
-        getDocs(query(collection(db, 'contabilidad_presupuestos'),  orderBy('periodo', 'desc'))),
-        getAllUsers(),
-        getDocs(query(collection(db, 'contabilidad_sueldos'),       orderBy('creadoEn', 'desc'))),
-        getDocs(collection(db, 'contabilidad_config')),
-        getDocs(query(collection(db, 'contabilidad_asientos'),      orderBy('numero', 'desc'))),
-        getDocs(query(collection(db, 'libro_diario'),               orderBy('date', 'desc'))),
-      ]);
-      setTransacciones(txSnap.docs.map(d  => ({ id: d.id, ...d.data() } as Transaccion)));
-      setFacturas(facSnap.docs.map(d      => ({ id: d.id, ...d.data() } as Factura)));
-      setPresupuestos(presSnap.docs.map(d => ({ id: d.id, ...d.data() } as Presupuesto)));
-      setEmpleados(empData as UserProfile[]);
-      setSueldos(sueldosSnap.docs.map(d   => ({ id: d.id, ...d.data() } as Sueldo)));
-      setAsientos(asientosSnap.docs.map(d => ({ id: d.id, ...d.data() } as AsientoContable)));
-      setLibroEntries(libroSnap.docs.map(d => {
-        const raw = d.data();
-        return {
-          ...raw,
-          id:        d.id,
-          date:      raw.date?.toDate?.() ?? new Date(raw.date),
-          createdAt: raw.createdAt?.toDate?.() ?? new Date(),
-        } as LibroBancoEntry;
-      }));
-      
-      const cfgDoc = configSnap.docs.find(d => d.id === 'empresa');
-      const monedaDoc = configSnap.docs.find(d => d.id === 'moneda');
-      if (monedaDoc) {
-        const m = monedaDoc.data() as MonedaConfig;
-        setMonedaConfig(m);
-        setMonedaForm(m);
-      }
-      if (cfgDoc) {
-        const cfg = cfgDoc.data() as CompanyConfig;
-        setCompanyConfig(cfg);
-        setConfigForm(cfg);
-      }
-    } catch (e) {
-      console.error('Error fetching contabilidad:', e);
-    } finally {
-      setLoading(false);
-    }
+    try { setEmpleados((await getAllUsers()) as UserProfile[]); }
+    catch (e) { console.error('Error cargando empleados:', e); }
   }, []);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  useEffect(() => {
+    let pendientes = 7;
+    const listo = () => { pendientes -= 1; if (pendientes <= 0) setLoading(false); };
+    const alFallar = (que: string) => (e: unknown) => {
+      console.error(`Error escuchando ${que}:`, e);
+      avisarError(e);
+      listo();
+    };
+    let primeraConfig = true;
+    const subs = [
+      onSnapshot(query(collection(db, 'contabilidad_transacciones'), orderBy('fecha', 'desc')), snap => {
+        setTransacciones(snap.docs.map(d => ({ id: d.id, ...d.data() } as Transaccion))); listo();
+      }, alFallar('transacciones')),
+      onSnapshot(query(collection(db, 'contabilidad_facturas'), orderBy('fecha', 'desc')), snap => {
+        setFacturas(snap.docs.map(d => ({ id: d.id, ...d.data() } as Factura))); listo();
+      }, alFallar('facturas')),
+      onSnapshot(query(collection(db, 'contabilidad_presupuestos'), orderBy('periodo', 'desc')), snap => {
+        setPresupuestos(snap.docs.map(d => ({ id: d.id, ...d.data() } as Presupuesto))); listo();
+      }, alFallar('presupuestos')),
+      onSnapshot(query(collection(db, 'contabilidad_sueldos'), orderBy('creadoEn', 'desc')), snap => {
+        setSueldos(snap.docs.map(d => ({ id: d.id, ...d.data() } as Sueldo))); listo();
+      }, alFallar('sueldos')),
+      onSnapshot(query(collection(db, 'contabilidad_asientos'), orderBy('numero', 'desc')), snap => {
+        setAsientos(snap.docs.map(d => ({ id: d.id, ...d.data() } as AsientoContable))); listo();
+      }, alFallar('asientos')),
+      onSnapshot(query(collection(db, 'libro_diario'), orderBy('date', 'desc')), snap => {
+        setLibroEntries(snap.docs.map(d => {
+          const raw = d.data();
+          return {
+            ...raw,
+            id:        d.id,
+            date:      raw.date?.toDate?.() ?? new Date(raw.date),
+            createdAt: raw.createdAt?.toDate?.() ?? new Date(),
+          } as LibroBancoEntry;
+        }));
+        listo();
+      }, alFallar('libro bancos')),
+      onSnapshot(collection(db, 'contabilidad_config'), snap => {
+        const cfgDoc    = snap.docs.find(d => d.id === 'empresa');
+        const monedaDoc = snap.docs.find(d => d.id === 'moneda');
+        if (monedaDoc) {
+          const m = monedaDoc.data() as MonedaConfig;
+          setMonedaConfig(m);
+          if (primeraConfig) setMonedaForm(m);
+        }
+        if (cfgDoc) {
+          const cfg = cfgDoc.data() as CompanyConfig;
+          setCompanyConfig(cfg);
+          // El formulario solo se rellena la primera vez, para no pisar lo
+          // que alguien esté escribiendo cuando otro guarda.
+          if (primeraConfig) setConfigForm(cfg);
+        }
+        primeraConfig = false;
+        listo();
+      }, alFallar('configuración')),
+    ];
+    getAllUsers().then(e => setEmpleados(e as UserProfile[])).catch(e => console.error('Error cargando empleados:', e));
+    return () => subs.forEach(u => u());
+  }, []);
 
   const handleRefresh = async () => {
     setRefreshing(true);

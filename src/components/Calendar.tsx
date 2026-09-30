@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSettings } from '@/contexts/SettingsContext';
-import { getTasks, updateTask, getAllUsers } from '@/lib/firebase';
+import { subscribeToTasks, updateTask, subscribeToUsers } from '@/lib/firebase';
 import TaskReportDialog from '@/components/TaskReportDialog';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
@@ -210,8 +211,12 @@ const STA = {
 
 const ROLE_CFG: Record<string, { label: string; color: string }> = {
   CEO:            { label: 'CEO',            color: '#c084fc' },
-  Administración: { label: 'Administración', color: '#818cf8' },
+  Administración: { label: 'Administración', color: '#60a5fa' },
   Empleado:       { label: 'Empleado',       color: '#94a3b8' },
+  Contador:       { label: 'Contador',       color: '#34d399' },
+  Diseño:         { label: 'Diseño',         color: '#a78bfa' },
+  Secretaría:     { label: 'Secretaría',     color: '#4ade80' },
+  Programación:   { label: 'Programación',   color: '#f472b6' },
 };
 
 type FilterStatus   = 'all' | 'pending' | 'in-progress' | 'completed';
@@ -397,7 +402,9 @@ const ReadOnlyTaskView: React.FC<{ task: ExtTask; users: UserProfile[]; isCEO: b
 const DayPanel: React.FC<{
   day: Date; tasks: ExtTask[]; users: UserProfile[]; holidays: NagerHoliday[];
   onTaskClick: (task: ExtTask) => void; onClose: () => void;
-}> = ({ day, tasks, users, holidays, onTaskClick, onClose }) => {
+  /** Solo para el CEO: abre el Panel CEO con una tarea nueva para este día. */
+  onCrearTarea?: () => void;
+}> = ({ day, tasks, users, holidays, onTaskClick, onClose, onCrearTarea }) => {
   const past  = isDayPast(day);
   const today = isToday(day);
   const dayHolidays = holidays.filter(h => isSameDay(new Date(h.date), day));
@@ -430,6 +437,14 @@ const DayPanel: React.FC<{
       </div>
 
       <div className="cal-panel-body">
+        {onCrearTarea && !past && (
+          <button type="button" onClick={onCrearTarea}
+            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '9px 12px', marginBottom: 8,
+                     borderRadius: 10, border: '1px dashed var(--cal-border, rgba(255,255,255,0.15))', background: 'transparent',
+                     color: 'var(--cal-text-secondary, var(--cal-text-muted))', fontSize: 12, fontWeight: 300, cursor: 'pointer' }}>
+            + Crear tarea este día
+          </button>
+        )}
         {/* Holidays first */}
         {dayHolidays.map((h, i) => (
           <div key={i} className="cal-holiday-panel-item">
@@ -527,6 +542,9 @@ const CalendarPage: React.FC = () => {
   const { userProfile } = useAuth();
   const { settings, isDark } = useSettings();
   const isCEO = userProfile?.role === 'CEO';
+  const navigate = useNavigate();
+  // Las tareas se crean en el Panel CEO: se abre ahí con el formulario listo y la fecha puesta.
+  const crearTareaEn = (dia: Date) => navigate('/dashboard/ceo-panel', { state: { nuevaTarea: format(dia, 'yyyy-MM-dd') } });
 
   const accentColor: string = (settings?.accentColor as string) || '#6366f1';
 
@@ -561,24 +579,22 @@ const CalendarPage: React.FC = () => {
   }, [isDark, accentColor]);
 
   // ── Fetch functions declared before useEffect that calls them ──
-  const fetchTasks = useCallback(async () => {
-    try {
-      const raw = await getTasks();
+  // Tareas y usuarios en vivo: lo que el CEO cree o cambie en su panel se ve
+  // acá al instante. `fetchTasks` queda para los llamados que ya había.
+  const fetchTasks = useCallback(async () => {}, []);
+
+  useEffect(() => {
+    const unsubTasks = subscribeToTasks(raw => {
       const mapped = raw.map((t: Record<string, unknown>) => ({
         ...t,
         date: (t.date as { toDate?: () => Date } | null)?.toDate?.() ?? new Date(),
       })) as ExtTask[];
       setAllTasks(mapped);
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); }
+      setLoading(false);
+    }, e => { console.error(e); setLoading(false); });
+    const unsubUsers = subscribeToUsers(u => setUsers(u as UserProfile[]), e => console.error(e));
+    return () => { unsubTasks(); unsubUsers(); };
   }, []);
-  
-  const fetchUsers = useCallback(async () => {
-    try { setUsers((await getAllUsers()) as UserProfile[]); } catch (e) { console.error(e); }
-  }, []);
-
-  // ── Load tasks & users on mount ──
-  useEffect(() => { fetchTasks(); fetchUsers(); }, [fetchTasks, fetchUsers]);
 
   // ── Load holidays when month/year or country changes (async, no sync setState) ──
   useEffect(() => {
@@ -862,6 +878,7 @@ const CalendarPage: React.FC = () => {
                     day={panelDay} tasks={panelTasks} users={users} holidays={panelHolidays}
                     onTaskClick={handleTaskClick}
                     onClose={() => { setPanelDay(null); setMobilePanelOpen(false); }}
+                    onCrearTarea={isCEO ? () => crearTareaEn(panelDay) : undefined}
                   />
                 </div>
               )}
@@ -874,6 +891,7 @@ const CalendarPage: React.FC = () => {
                   day={panelDay} tasks={panelTasks} users={users} holidays={panelHolidays}
                   onTaskClick={handleTaskClick}
                   onClose={() => { setPanelDay(null); setMobilePanelOpen(false); }}
+                    onCrearTarea={isCEO ? () => crearTareaEn(panelDay) : undefined}
                 />
               </div>
             )}

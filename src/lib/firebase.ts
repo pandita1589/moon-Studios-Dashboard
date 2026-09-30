@@ -1,3 +1,4 @@
+import type { DocumentData } from 'firebase/firestore';
 import { initializeApp, getApps } from 'firebase/app';
 import {
   getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword,
@@ -391,10 +392,20 @@ export const updateTask = async (taskId: string, data: any) =>
 export const deleteTask = async (taskId: string) =>
   deleteDoc(doc(db, 'tasks', taskId));
 
-export const subscribeToTasks = (callback: (tasks: any[]) => void) => {
+export const subscribeToTasks = (callback: (tasks: any[]) => void, onError?: (e: Error) => void) => {
   const q = query(collection(db, 'tasks'), orderBy('createdAt', 'desc'));
-  return onSnapshot(q, snap => callback(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+  return onSnapshot(q, snap => callback(snap.docs.map(d => ({ id: d.id, ...d.data() }))), e => onError?.(e));
 };
+
+// Usuarios en vivo. Sin orderBy en la consulta: Firestore deja fuera a los
+// documentos que no tienen el campo ordenado (usuarios viejos sin createdAt
+// desaparecían de la lista). Se ordena acá, los más nuevos primero.
+export const subscribeToUsers = (callback: (users: DocumentData[]) => void, onError?: (e: Error) => void) =>
+  onSnapshot(collection(db, 'users'), snap => {
+    const lista = snap.docs.map(d => ({ uid: d.id, ...d.data() })) as { uid: string; createdAt?: { toMillis?: () => number } }[];
+    lista.sort((a, b) => (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0));
+    callback(lista);
+  }, e => onError?.(e));
 
 export const getTasksRealtime = subscribeToTasks;
 
@@ -409,6 +420,10 @@ export const getAnnouncements = async () => {
   const snap = await getDocs(query(collection(db, 'announcements'), orderBy('createdAt', 'desc')));
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 };
+
+export const subscribeToAnnouncements = (callback: (items: DocumentData[]) => void, onError?: (e: Error) => void) =>
+  onSnapshot(query(collection(db, 'announcements'), orderBy('createdAt', 'desc')),
+    snap => callback(snap.docs.map(d => ({ id: d.id, ...d.data() }))), e => onError?.(e));
 
 export const updateAnnouncement = async (id: string, data: any) =>
   updateDoc(doc(db, 'announcements', id), data);
