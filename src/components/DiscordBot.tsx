@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSettings } from '@/contexts/SettingsContext';
 import {
-  getBotStatus, getServers, startBot, sendBotMessage,
+  getBotStatus, getServers, sendBotMessage,
   getServerChannels, getBotCommands, updateBotProfile,
   getBotInvite, getAuditLog, getUptimeHistory, getPublicIncidents,
   createIncident, updateIncident, deleteIncident,
@@ -13,7 +13,7 @@ import {
   getDocs, orderBy, query, limit, deleteDoc,
 } from 'firebase/firestore';
 import {
-  Bot, Server, XCircle, Play, RefreshCw, Send, MessageSquare,
+  Bot, Server, XCircle, RefreshCw, Send, MessageSquare,
   Hash, CheckCircle, Wifi, Clock, Users, Activity, Zap, Shield,
   AlertCircle, Settings, BarChart3, Terminal, Eye, EyeOff,
   Command, ChevronDown, ChevronRight, Key, Link, Wrench,
@@ -271,6 +271,14 @@ const CommandCard: React.FC<{ cmd: BotCommand; accentColor: string }> = ({ cmd, 
 };
 
 /* ══ Main ══════════════════════════════════════════════════════════════════════ */
+// "Failed to fetch" no le dice nada a nadie: se traduce a lo que suele pasar.
+function mensajeApi(e: unknown): string {
+  const m = String((e as Error | undefined)?.message ?? e ?? '');
+  if (/failed to fetch|networkerror|load failed/i.test(m)) return 'La API de Luna NET no respondió. Puede estar reiniciándose o sin conexión; prueba de nuevo en un momento.';
+  if (/token requerido|no autorizado|403|401/i.test(m)) return `Tu sesión no tiene permiso para administrar el bot (${m}). Solo CEO y Administración pueden hacerlo.`;
+  return m || 'Error desconocido al consultar la API de Luna NET.';
+}
+
 const DiscordBot: React.FC = () => {
   const { isCEO, userProfile } = useAuth();
   const { settings } = useSettings();
@@ -284,8 +292,10 @@ const DiscordBot: React.FC = () => {
   const [loading,        setLoading]        = useState(true);
   const [refreshing,     setRefreshing]     = useState(false);
   const [error,          setError]          = useState<string | null>(null);
-  const [token,          setToken]          = useState('');
-  const [starting,       setStarting]       = useState(false);
+  // Error al hablar con la API de Luna NET (sin conexión, sin permiso…). Es
+  // distinto de que el bot esté apagado: antes cualquier fallo se mostraba
+  // como "Bot Desconectado" y pedía un token que no servía para nada.
+  const [apiError,       setApiError]       = useState<string | null>(null);
   const [activeTab,      setActiveTab]      = useState('status');
   const [showToken,      setShowToken]      = useState(false);
   const [savingName,     setSavingName]     = useState(false);
@@ -357,11 +367,16 @@ const DiscordBot: React.FC = () => {
     try {
       if (!silent) setLoading(true); else setRefreshing(true);
       const [status, servers, discordConfig] = await Promise.all([
-        getBotStatus().catch(() => ({ status: 'offline', servers: 0, users: 0 })),
+        getBotStatus().then(
+          (s) => { setApiError(null); return s; },
+          (e: unknown) => { setApiError(mensajeApi(e)); return null; },
+        ),
         getServers().catch(() => []),
         getDiscordConfig().catch(() => ({})),
       ]);
-      setBotData({ ...status, serversList: servers });
+      // Si solo falló una actualización automática, se mantiene lo que ya se veía.
+      if (status) setBotData({ ...status, serversList: servers });
+      else if (!silent) setBotData(null);
       setConfig(discordConfig || {});
       if (silent) pushLog('Datos actualizados automáticamente', 'info');
     } catch (err: any) {
@@ -488,18 +503,6 @@ const DiscordBot: React.FC = () => {
       await logActivity('MESSAGE_SENT', { guildId: selectedServer, channelId: selectedChannel }, userProfile?.uid || '', userProfile?.displayName || '');
     } catch (err: any) { setError(err.message); pushLog(`Error: ${err.message}`, 'error'); }
     finally { setSending(false); }
-  };
-
-  const handleStartBot = async () => {
-    if (!token.trim()) return;
-    setStarting(true); setError(null);
-    try {
-      await startBot(token);
-      pushLog('Bot iniciado correctamente', 'success');
-      await logActivity('BOT_STARTED', {}, userProfile?.uid || '', userProfile?.displayName || '');
-      setToken(''); await fetchAllData();
-    } catch (err: any) { setError('Error: ' + err.message); pushLog(`Error inicio: ${err.message}`, 'error'); }
-    finally { setStarting(false); }
   };
 
   const handleUpdateBotName = async () => {
@@ -725,8 +728,9 @@ const DiscordBot: React.FC = () => {
     </div>
   );
 
-  /* ── Offline ── */
-  if (!botData?.status || botData.status === 'offline') return (
+  /* ── Sin conexión con la API / bot apagado ── */
+  const reintentar = () => { setLoading(true); fetchAllData(); };
+  const pantallaEstado = (tipo: 'api' | 'offline') => (
     <div className={`space-y-5 ${hasAnimations ? 'animate-fade-in' : ''}`}>
       <div className="flex items-center gap-2.5">
         <div className="w-8 h-8 rounded-xl flex items-center justify-center"
@@ -738,38 +742,28 @@ const DiscordBot: React.FC = () => {
       <div className="rounded-2xl p-12 text-center border" style={{ background: 'var(--sidebar-card-bg)', borderColor: 'var(--border-main)' }}>
         <div className="w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-6"
           style={{ background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.15)' }}>
-          <XCircle className="w-10 h-10" style={{ color: '#f87171' }} strokeWidth={1} />
+          {tipo === 'api'
+            ? <AlertCircle className="w-10 h-10" style={{ color: '#f87171' }} strokeWidth={1} />
+            : <XCircle className="w-10 h-10" style={{ color: '#f87171' }} strokeWidth={1} />}
         </div>
-        <h3 className="text-xl font-light mb-1" style={{ color: 'var(--text-primary)' }}>Bot Desconectado</h3>
-        <p className="text-sm font-light mb-8" style={{ color: 'var(--text-muted)' }}>
-          {isCEO ? 'Ingresa el token para iniciar el bot.' : 'Contacta al CEO para iniciar el bot.'}
+        <h3 className="text-xl font-light mb-1" style={{ color: 'var(--text-primary)' }}>
+          {tipo === 'api' ? 'No se pudo conectar con Luna NET' : 'Bot desconectado'}
+        </h3>
+        <p className="text-sm font-light mb-8 max-w-md mx-auto" style={{ color: 'var(--text-muted)' }}>
+          {tipo === 'api'
+            ? apiError
+            : 'La API responde, pero el bot no está conectado a Discord. Reinícialo desde el panel del hosting (Pterodactyl).'}
         </p>
-        {isCEO && (
-          <div className="max-w-sm mx-auto space-y-3">
-            <input type="password" value={token} onChange={e => setToken(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleStartBot()}
-              placeholder="Token del bot..."
-              style={{ ...inputStyle, textAlign: 'center', letterSpacing: '0.05em' }}
-            />
-            <button onClick={handleStartBot} disabled={starting || !token.trim()}
-              className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl text-sm font-light hover:opacity-90 disabled:opacity-40 transition-all"
-              style={{ background: accentColor, color: 'white', border: 'none' }}>
-              {starting
-                ? <><RefreshCw className="w-4 h-4 animate-spin" />Iniciando...</>
-                : <><Play className="w-4 h-4" />Iniciar Bot</>}
-            </button>
-          </div>
-        )}
-        {error && (
-          <div className="mt-4 p-3 rounded-xl flex items-start gap-2 max-w-sm mx-auto"
-            style={{ background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.15)' }}>
-            <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" strokeWidth={1.5} />
-            <p className="text-red-400 text-sm font-light text-left">{error}</p>
-          </div>
-        )}
+        <button onClick={reintentar}
+          className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-light hover:opacity-90 transition-all"
+          style={{ background: accentColor, color: 'white', border: 'none' }}>
+          <RefreshCw className="w-4 h-4" /> Reintentar
+        </button>
       </div>
     </div>
   );
+  if (!botData && apiError) return pantallaEstado('api');
+  if (!botData?.status || botData.status === 'offline') return pantallaEstado('offline');
 
   const isOnline = botData.status === 'online' || botData.status === 'ready';
   const botName  = botData.username || 'Bot';

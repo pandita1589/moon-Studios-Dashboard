@@ -37,16 +37,9 @@ export const getServers = async () => {
   return handleResponse(res);
 };
 
-// NOTA: /api/bot/start no existe como ruta en el backend de Luna NET (el bot
-// corre como proceso siempre-activo, no se "inicia" vía API) — esta llamada
-// falla con 404 desde antes de esta migración de auth. Se deja el export
-// porque DiscordBot.tsx lo importa; no es parte de este cambio de auth.
-export const startBot = async (token: string) => {
-  const res = await fetch(`${API_URL}/api/bot/start`, {
-    method: 'POST', headers: await getAuthHeaders(), body: JSON.stringify({ token }),
-  });
-  return handleResponse(res);
-};
+// No hay "iniciar bot" por API: el bot corre como proceso siempre activo en el
+// hosting (Pterodactyl). La vieja startBot() llamaba a /api/bot/start, que
+// nunca existió, y además mandaba el token del bot desde el navegador.
 
 export const sendBotMessage = async (guildId: string, channelId: string, message: string) => {
   const res = await fetch(`${API_URL}/api/bot/send-message`, {
@@ -74,9 +67,10 @@ export const updateBotProfile = async (username: string) => {
   return handleResponse(res);
 };
 
-// Solo arma una URL de invite pública — no requiere auth
+// La ruta exige sesión de staff (requireOwnerOrStaff): sin el token contestaba
+// siempre 401 "Token requerido".
 export const getBotInvite = async () => {
-  const res = await fetch(`${API_URL}/api/bot/invite`);
+  const res = await fetch(`${API_URL}/api/bot/invite`, { headers: await getAuthHeaders() });
   return handleResponse(res);
 };
 
