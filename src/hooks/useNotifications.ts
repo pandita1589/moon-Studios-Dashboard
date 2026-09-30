@@ -23,6 +23,8 @@ export interface UnifiedNotification {
 
 interface UseNotificationsOptions {
   uid:               string | undefined;
+  /** Mensajes de contacto de las webs: las reglas solo dejan leerlos a CEO y Administración. */
+  puedeVerMensajeria?: boolean;
   soundType:         SoundType;
   soundVolume:       number;
   muted:             boolean;
@@ -67,8 +69,14 @@ function cleanLegacyKeys() {
 
 // ── Hook principal ─────────────────────────────────────────────────────────────
 
+// Hilos.tsx guarda acá cuándo respondiste tú un hilo, para no avisarte de tu
+// propia respuesta (el hilo no guarda quién respondió último: las reglas de
+// Firestore no dejan escribir ese campo a quien no es el autor).
+export const claveMiRespuesta = (uid: string, hiloId: string) => `hilos_mi_respuesta_${uid}_${hiloId}`;
+
 export function useNotifications({
   uid,
+  puedeVerMensajeria = false,
   soundType,
   soundVolume,
   muted,
@@ -216,25 +224,33 @@ export function useNotifications({
       return;
     }
 
+    // Antes filtraba por `participants`, un campo que ningún hilo tiene: esta
+    // campana nunca sonaba. Los hilos guardan a sus seguidores en
+    // `subscribers` (el autor y quien responde). Cada respuesta nueva cambia
+    // lastReplyAt, y con eso el id: cuenta como notificación nueva.
     const q = query(
       collection(db, 'hilos'),
-      where('participants', 'array-contains', uid)
+      where('subscribers', 'array-contains', uid)
     );
     const unsub = onSnapshot(q, snap => {
       const items: UnifiedNotification[] = snap.docs
+        .filter(doc => {
+          const d = doc.data();
+          if (d.deleted || !d.replyCount) return false;
+          const ultima = d.lastReplyAt?.toMillis?.() ?? 0;
+          let mia = 0;
+          try { mia = Number(localStorage.getItem(claveMiRespuesta(uid, doc.id)) || 0); } catch { /* sin storage */ }
+          return ultima > mia + 2000;
+        })
         .map(doc => {
           const d  = doc.data();
-          const ts = d.updatedAt?.toDate
-            ? d.updatedAt.toDate()
-            : d.createdAt?.toDate
-              ? d.createdAt.toDate()
-              : new Date(0);
+          const ts = d.lastReplyAt?.toDate?.() ?? d.updatedAt?.toDate?.() ?? new Date(0);
           return {
-            id:        `hilo_${doc.id}`,
+            id:        `hilo_${doc.id}_${ts.getTime()}`,
             rawId:     doc.id,
             category:  'thread' as NotifCategory,
-            title:     d.title       ?? 'Nuevo hilo',
-            preview:   d.lastMessage ?? d.description ?? '',
+            title:     `Nueva respuesta en "${d.title ?? 'un hilo'}"`,
+            preview:   `${d.replyCount} respuesta${d.replyCount === 1 ? '' : 's'}`,
             createdAt: ts,
             linkTo:    '/dashboard/hilos',
           };
@@ -248,27 +264,30 @@ export function useNotifications({
 
   // ── Listener: Mensajería ──────────────────────────────────────────────────
   useEffect(() => {
-    if (!uid || !enabledCategories.message) {
+    if (!uid || !enabledCategories.message || !puedeVerMensajeria) {
       merge([], 'message');
       return;
     }
 
+    // El panel Mensajería muestra `correos_panel_moonstudios` (formularios de
+    // contacto de las webs, campos nombre/mensaje/fecha/leido). Antes esto
+    // escuchaba `mensajeria`, que el panel no usa: nunca avisaba.
     const q = query(
-      collection(db, 'mensajeria'),
-      where('toUid', '==', uid),
-      where('read',  '==', false)
+      collection(db, 'correos_panel_moonstudios'),
+      where('leido', '==', false)
     );
     const unsub = onSnapshot(q, snap => {
       const items: UnifiedNotification[] = snap.docs
         .map(doc => {
           const d = doc.data();
+          const f = d.fecha?.toDate ? d.fecha.toDate() : new Date(d.fecha || 0);
           return {
             id:        `msg_${doc.id}`,
             rawId:     doc.id,
             category:  'message' as NotifCategory,
-            title:     `Mensaje de ${d.fromName ?? 'alguien'}`,
-            preview:   d.text ?? d.content ?? '',
-            createdAt: d.createdAt?.toDate ? d.createdAt.toDate() : new Date(d.createdAt || 0),
+            title:     `Mensaje de ${d.nombre ?? 'alguien'}`,
+            preview:   String(d.mensaje ?? '').slice(0, 140),
+            createdAt: Number.isNaN(f.getTime()) ? new Date(0) : f,
             linkTo:    '/dashboard/mensajeria',
           };
         })
@@ -277,7 +296,7 @@ export function useNotifications({
       merge(items, 'message');
     }, err => console.error('[notif] mensajeria:', err));
     return unsub;
-  }, [uid, enabledCategories.message, merge]);
+  }, [uid, enabledCategories.message, puedeVerMensajeria, merge]);
 
   // ── Acciones ──────────────────────────────────────────────────────────────
 

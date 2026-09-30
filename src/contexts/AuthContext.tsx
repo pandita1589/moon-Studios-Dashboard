@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { auth, getUserProfile, registerSession, logUserActivity } from '@/lib/firebase';
-import type { UserRole, UserProfile } from '@/types';
+import { tienePermiso, type Permission, type UserRole, type UserProfile } from '@/types';
 
 interface AuthContextType {
   currentUser:    User | null;
@@ -15,6 +15,8 @@ interface AuthContextType {
   refreshProfile: () => Promise<void>;
   isContador:     boolean;
   isProgramacion: boolean;
+  /** ¿Este usuario puede entrar al panel? El CEO puede a todos. */
+  puede:          (permiso: Permission) => boolean;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -29,6 +31,7 @@ const AuthContext = createContext<AuthContextType>({
   refreshProfile: async () => {},
   isContador:     false,
   isProgramacion: false,
+  puede:          () => false,
 });
 
 export const useAuth = () => useContext(AuthContext);
@@ -104,15 +107,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const isAdmin        = userRole === 'Administración' || isCEO;
   const isEmployee     = userRole === 'Empleado' || isAdmin;
   const canEdit        = isCEO || userRole === 'Administración';
-  const isContador     = userRole === 'Contador';
-  const isProgramacion = userRole === 'Programación';
+  // "Tiene el panel de…", no "tiene exactamente ese rol": el CEO también.
+  const isContador     = tienePermiso(userRole, 'contador');
+  const isProgramacion = tienePermiso(userRole, 'programacion');
+  const puede          = (permiso: Permission) => tienePermiso(userRole, permiso);
 
   return (
     <AuthContext.Provider value={{
       currentUser, userProfile, userRole,
       isCEO, isAdmin, isEmployee, canEdit,
       loading, refreshProfile,
-      isContador, isProgramacion,
+      isContador, isProgramacion, puede,
     }}>
       {!loading && children}
     </AuthContext.Provider>

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { db } from '@/lib/firebase';
+import { leerCamposComunes, escribirCamposComunes } from '@/lib/devProjects';
 import {
   collection, addDoc, deleteDoc, doc, onSnapshot,
   query, orderBy, serverTimestamp, updateDoc,
@@ -9,7 +10,7 @@ import type { Project, VersionChange, ProjectStatus, ChangeType } from '@/types'
 import {
   Code2, Plus, Trash2, Search, GitBranch, Tag, X, Edit3,
   ExternalLink, ChevronDown, Play, Pause,
-  CheckCircle2, XCircle, Clock, AlertCircle, RefreshCw,
+  CheckCircle2, XCircle, Clock, AlertCircle, RefreshCw, Archive,
   BarChart3, Target, Zap, Flag, TrendingUp,
   GitCommit, Package, Shield, Activity, CheckSquare,
   Cpu, Layers,
@@ -24,6 +25,8 @@ const STATUS_META: Record<ProjectStatus, { label: string; color: string; bg: str
   paused:    { label: 'Pausado',       color: '#f59e0b', bg: 'rgba(245,158,11,0.1)',  icon: Pause },
   completed: { label: 'Completado',    color: '#60a5fa', bg: 'rgba(96,165,250,0.1)',  icon: CheckCircle2 },
   cancelled: { label: 'Cancelado',     color: '#f87171', bg: 'rgba(248,113,113,0.1)', icon: XCircle },
+  // Estado que pone el panel Proyectos (antes se veía como "Planificación").
+  archived:  { label: 'Archivado',     color: '#6b7280', bg: 'rgba(107,114,128,0.1)', icon: Archive },
 };
 
 const CHANGE_META: Record<ChangeType, { label: string; color: string; icon: React.FC<any> }> = {
@@ -267,10 +270,10 @@ export default function PanelProgramacion() {
     const unsub = onSnapshot(q, snap => {
       setProjects(snap.docs.map(d => {
         const r = d.data();
-        return { ...r, id: d.id, createdAt: r.createdAt?.toDate?.() ?? new Date() } as Project;
+        return { ...r, ...leerCamposComunes(r), id: d.id, createdAt: r.createdAt?.toDate?.() ?? new Date() } as unknown as Project;
       }));
       setLoading(false);
-    });
+    }, () => setLoading(false));
     return () => unsub();
   }, []);
 
@@ -341,11 +344,11 @@ export default function PanelProgramacion() {
     setSaving(true);
     try {
       if (editProject) {
-        await updateDoc(doc(db, 'dev_projects', editProject.id), { ...projectForm, updatedAt: serverTimestamp() });
+        await updateDoc(doc(db, 'dev_projects', editProject.id), { ...escribirCamposComunes({ ...projectForm }), updatedAt: serverTimestamp() });
         showToast('success', 'Proyecto actualizado');
       } else {
         await addDoc(collection(db, 'dev_projects'), {
-          ...projectForm,
+          ...escribirCamposComunes({ ...projectForm }),
           lead: currentUser?.uid,
           leadName: userProfile?.displayName,
           members: [currentUser?.uid],
@@ -477,7 +480,7 @@ export default function PanelProgramacion() {
   );
 
   const projectOptionsWithVersion = useMemo(() =>
-    [{ value: '', label: 'Seleccionar proyecto...' }, ...projects.map(p => ({ value: p.id, label: `${p.name} (v${p.version})` }))],
+    [{ value: '', label: 'Seleccionar proyecto...' }, ...projects.map(p => ({ value: p.id, label: p.version ? `${p.name} (v${p.version})` : p.name }))],
     [projects]
   );
 
@@ -815,7 +818,7 @@ export default function PanelProgramacion() {
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2 min-w-0">
                           <p className="text-sm font-light truncate" style={{ color: 'var(--text-primary)' }}>{p.name}</p>
-                          <span className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>v{p.version}</span>
+                          {p.version && <span className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>v{p.version}</span>}
                         </div>
                         <span className="text-[10px] font-light" style={{ color: '#34d399' }}>{progress}%</span>
                       </div>
@@ -976,7 +979,7 @@ export default function PanelProgramacion() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
                           <p className="text-sm font-light truncate" style={{ color: 'var(--text-primary)' }}>{p.name}</p>
-                          <span className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>v{p.version}</span>
+                          {p.version && <span className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>v{p.version}</span>}
                         </div>
                         <div className="h-1 rounded-full overflow-hidden w-full max-w-[180px]" style={{ background: 'var(--border-main)' }}>
                           <div className="h-full rounded-full transition-all" style={{ width: `${progress}%`, background: sm.color + 'bb' }} />

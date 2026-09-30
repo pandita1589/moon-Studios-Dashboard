@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAllUsers } from '@/lib/firebase';
 import EmployeeContractModal from '@/components/EmployeeContractModal';
@@ -41,6 +42,27 @@ import { es } from 'date-fns/locale';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 type TipoTransaccion = 'ingreso' | 'egreso';
+
+// 'yyyy-MM-dd' al mediodía local: new Date('2026-09-29') es medianoche UTC,
+// que en Perú (UTC-5) cae el día anterior.
+const fechaLocal = (s: string) => new Date(`${s}T12:00:00`);
+
+const avisarError = (e: unknown) => {
+  const m = (e as { code?: string; message?: string } | null);
+  toast.error(m?.code === 'permission-denied' ? 'No tienes permiso para esta acción.' : `No se pudo guardar: ${m?.message ?? String(e)}`);
+};
+
+// Lo usado de un presupuesto = egresos de su categoría en su mes (periodo "yyyy-MM").
+function usadoPresupuesto(p: { categoria: string; periodo: string }, txs: { tipo: string; categoria: string; monto: number; fecha: unknown }[]) {
+  return txs.reduce((acc, t) => {
+    if (t.tipo !== 'egreso' || t.categoria !== p.categoria) return acc;
+    const ts = t.fecha as { toDate?: () => Date } | Date | null | undefined;
+    const f: Date | null = ts instanceof Date ? ts : ts?.toDate?.() ?? null;
+    if (!f) return acc;
+    const mes = `${f.getFullYear()}-${String(f.getMonth() + 1).padStart(2, '0')}`;
+    return mes === p.periodo ? acc + (Number(t.monto) || 0) : acc;
+  }, 0);
+}
 
 interface Transaccion {
   id: string;
@@ -836,14 +858,14 @@ const Contador: React.FC = () => {
         monto:          parseFloat(txForm.monto),
         descripcion:    txForm.descripcion,
         categoria:      txForm.categoria,
-        fecha:          Timestamp.fromDate(new Date(txForm.fecha)),
+        fecha:          Timestamp.fromDate(fechaLocal(txForm.fecha)),
         creadoPor:      userProfile?.uid || '',
         creadoPorNombre: userProfile?.displayName || '',
       });
       setShowTxModal(false);
       setTxForm({ tipo: 'ingreso', monto: '', descripcion: '', categoria: '', fecha: format(new Date(), 'yyyy-MM-dd') });
       fetchAll();
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error(e); avisarError(e); }
     finally { setSaving(false); }
   };
 
@@ -870,7 +892,7 @@ const Contador: React.FC = () => {
     if (!asientoBalanceado || !asientoForm.glosa) return;
     setSaving(true);
     try {
-      const nextNumero = (asientos[0]?.numero ?? 0) + 1;
+      const nextNumero = asientos.reduce((m, a) => Math.max(m, Number(a.numero) || 0), 0) + 1;
       const lineasFinal: LineaAsiento[] = lineasForm
   .filter(l => l.debe > 0 || l.haber > 0)
   .map((l, idx) => ({
@@ -879,7 +901,7 @@ const Contador: React.FC = () => {
   }));
       await addDoc(collection(db, 'contabilidad_asientos'), {
         numero:          nextNumero,
-        fecha:           Timestamp.fromDate(new Date(asientoForm.fecha)),
+        fecha:           Timestamp.fromDate(fechaLocal(asientoForm.fecha)),
         glosa:           asientoForm.glosa,
         lineas:          lineasFinal,
         totalDebe:       totalDebeForm,
@@ -895,7 +917,7 @@ const Contador: React.FC = () => {
         { cuentaCodigo: '', cuentaNombre: '', debe: 0, haber: 0 },
       ]);
       fetchAll();
-    } catch (e) { console.error(e); } finally { setSaving(false); }
+    } catch (e) { console.error(e); avisarError(e); } finally { setSaving(false); }
   };
 
   // ── Guardar Factura ──
@@ -910,7 +932,7 @@ const Contador: React.FC = () => {
         tipoEntidad: facForm.tipoEntidad,
         monto:       parseFloat(facForm.monto),
         estado:      facForm.estado,
-        fecha:       Timestamp.fromDate(new Date(facForm.fecha)),
+        fecha:       Timestamp.fromDate(fechaLocal(facForm.fecha)),
         descripcion: facForm.descripcion,
         creadoPor:   userProfile?.uid || '',
         observaciones: facForm.observaciones,  // ← agregar
@@ -918,7 +940,7 @@ const Contador: React.FC = () => {
       setShowFacModal(false);
       setFacForm({ numero: '', entidad: '', tipoEntidad: 'proveedor', monto: '', estado: 'pendiente', fecha: format(new Date(), 'yyyy-MM-dd'), descripcion: '', observaciones: '' });
       fetchAll();
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error(e); avisarError(e); }
     finally { setSaving(false); }
   };
 
@@ -946,7 +968,7 @@ const Contador: React.FC = () => {
       setEditPresId(null);
       setPresForm({ nombre: '', categoria: '', montoAsignado: '', periodo: format(new Date(), 'yyyy-MM') });
       fetchAll();
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error(e); avisarError(e); }
     finally { setSaving(false); }
   };
 
@@ -956,7 +978,7 @@ const Contador: React.FC = () => {
     try {
       await deleteDoc(doc(db, col, id));
       fetchAll();
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error(e); avisarError(e); }
   };
 
   // ── Cambiar estado factura ──
@@ -964,16 +986,20 @@ const Contador: React.FC = () => {
     try {
       await updateDoc(doc(db, 'contabilidad_facturas', id), { estado });
       fetchAll();
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error(e); avisarError(e); }
   };
 
   // ── Auto-generar N° de factura ──
   const generarNumeroFactura = useCallback(() => {
-    const total = facturas.length + 1;
+    // El mayor correlativo existente + 1. Con "cantidad + 1", borrar una
+    // factura hacía que la siguiente repitiera un número ya emitido.
     const serie = 'F001';
-    const correlativo = String(total).padStart(5, '0');
-    return `${serie}-${correlativo}`;
-  }, [facturas.length]);
+    const mayor = facturas.reduce((m, f) => {
+      const n = Number(String(f.numero ?? '').split('-').pop());
+      return Number.isFinite(n) && n > m ? n : m;
+    }, 0);
+    return `${serie}-${String(mayor + 1).padStart(5, '0')}`;
+  }, [facturas]);
 
   // ── Guardar configuración empresa ──
   const handleSaveConfig = async () => {
@@ -982,7 +1008,7 @@ const Contador: React.FC = () => {
       await setDoc(doc(db, 'contabilidad_config', 'empresa'), configForm);
       setCompanyConfig(configForm);
       setShowConfigModal(false);
-    } catch (e) { console.error(e); } finally { setSavingConfig(false); }
+    } catch (e) { console.error(e); avisarError(e); } finally { setSavingConfig(false); }
   };
 
   const handleSaveMoneda = async () => {
@@ -991,7 +1017,7 @@ const Contador: React.FC = () => {
       await setDoc(doc(db, 'contabilidad_config', 'moneda'), monedaForm);
       setMonedaConfig(monedaForm);
       setShowMonedaModal(false);
-    } catch (e) { console.error(e); } finally { setSavingMoneda(false); }
+    } catch (e) { console.error(e); avisarError(e); } finally { setSavingMoneda(false); }
   };
 
   // ── Generar PDF de factura A4 ──
@@ -1245,7 +1271,7 @@ const Contador: React.FC = () => {
       setEditSueldoId(null);
       setSueldoForm({ montoBase: '', bonificaciones: '0', descuentos: '0', periodo: format(new Date(), 'yyyy-MM'), estado: 'pendiente', observaciones: '' });
       fetchAll();
-    } catch (e) { console.error(e); } finally { setSaving(false); }
+    } catch (e) { console.error(e); avisarError(e); } finally { setSaving(false); }
   };
 
   // ── Cambiar estado sueldo ──
@@ -1253,7 +1279,7 @@ const Contador: React.FC = () => {
     try {
       await updateDoc(doc(db, 'contabilidad_sueldos', id), { estado });
       fetchAll();
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error(e); avisarError(e); }
   };
 
   // ── Libro Bancos: guardar entrada ────────────────────────────────────────────
@@ -1282,7 +1308,7 @@ const Contador: React.FC = () => {
       setShowLibroModal(false);
       setLibroForm({ date: format(new Date(), 'yyyy-MM-dd'), tipo: 'ingreso', bankId: '', description: '', reference: '', amount: '', currency: 'PEN', category: 'Ventas', notes: '' });
       fetchAll();
-    } catch (e) { console.error(e); } finally { setSaving(false); }
+    } catch (e) { console.error(e); avisarError(e); } finally { setSaving(false); }
   };
 
   const handleDeleteLibroEntry = async (id: string, desc: string) => {
@@ -1291,7 +1317,7 @@ const Contador: React.FC = () => {
     try {
       await deleteDoc(doc(db, 'libro_diario', id));
       fetchAll();
-    } catch (e) { console.error(e); } finally { setLibroDeletingId(null); }
+    } catch (e) { console.error(e); avisarError(e); } finally { setLibroDeletingId(null); }
   };
 
   // ── Filtros ──
@@ -1911,9 +1937,10 @@ const Contador: React.FC = () => {
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {presupuestos.map(p => {
-                const pct   = p.montoAsignado > 0 ? Math.min((p.montoUsado / p.montoAsignado) * 100, 100) : 0;
-                const libre = Math.max(p.montoAsignado - p.montoUsado, 0);
-                const over  = p.montoUsado > p.montoAsignado;
+                const usado = usadoPresupuesto(p, transacciones);
+                const pct   = p.montoAsignado > 0 ? Math.min((usado / p.montoAsignado) * 100, 100) : 0;
+                const libre = Math.max(p.montoAsignado - usado, 0);
+                const over  = usado > p.montoAsignado;
                 return (
                   <Card key={p.id} className={`bg-zinc-950 border-zinc-800 ${over ? 'border-red-900/50' : ''}`}>
                     <CardContent className="p-4 space-y-3">
@@ -1954,7 +1981,7 @@ const Contador: React.FC = () => {
                       <div className="space-y-1.5">
                         <div className="flex items-center justify-between text-xs font-extralight">
                           <span className={over ? 'text-red-400' : 'text-zinc-400'}>
-                            Usado: {formatMoney(p.montoUsado)}
+                            Usado: {formatMoney(usado)}
                           </span>
                           <span className="text-zinc-500">
                             Asignado: {formatMoney(p.montoAsignado)}
@@ -1973,7 +2000,7 @@ const Contador: React.FC = () => {
                             {pct.toFixed(0)}% utilizado
                           </span>
                           <span className={over ? 'text-red-400' : 'text-emerald-400'}>
-                            {over ? `Excedido en ${formatMoney(p.montoUsado - p.montoAsignado)}` : `Libre: ${formatMoney(libre)}`}
+                            {over ? `Excedido en ${formatMoney(usado - p.montoAsignado)}` : `Libre: ${formatMoney(libre)}`}
                           </span>
                         </div>
                       </div>

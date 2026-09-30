@@ -86,6 +86,16 @@ interface Banner {
   creadoEn: any;
 }
 
+// El Panel CEO guarda el orden de los banners en `orden`; los que no lo tienen
+// (anteriores a eso) van al final, del más nuevo al más viejo.
+const ordenarBanners = <T extends { orden?: number; creadoEn?: { toMillis?: () => number } }>(lista: T[]): T[] =>
+  [...lista].sort((a, b) => {
+    const oa = typeof a.orden === 'number' ? a.orden : Number.MAX_SAFE_INTEGER;
+    const ob = typeof b.orden === 'number' ? b.orden : Number.MAX_SAFE_INTEGER;
+    if (oa !== ob) return oa - ob;
+    return (b.creadoEn?.toMillis?.() ?? 0) - (a.creadoEn?.toMillis?.() ?? 0);
+  });
+
 /* ─── CONSTANTES ─── */
 const passwordRules = [
   { id: 'length',  label: 'Mínimo 8 caracteres',   test: (p: string) => p.length >= 8 },
@@ -320,7 +330,8 @@ const CEOPanel: React.FC = () => {
     setBannersLoading(true);
     try {
       const snap = await getDocs(query(collection(db, 'dashboard_banners'), orderBy('creadoEn', 'desc')));
-      setBanners(snap.docs.map(d => ({ id: d.id, ...d.data() } as Banner)));
+      // Mismo orden que el Inicio: el que se guardó con "Guardar" (campo orden).
+      setBanners(ordenarBanners(snap.docs.map(d => ({ id: d.id, ...d.data() } as Banner))));
       const configSnap = await getDoc(doc(db, 'dashboard_config', 'banner_settings'));
       if (configSnap.exists()) {
         const cfg = configSnap.data();

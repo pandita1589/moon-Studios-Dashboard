@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
-import { getTasks, getAnnouncements, subscribeToTasks } from '@/lib/firebase';
-import { getBotStatus } from '@/services/discordApi';
+import { getAnnouncements, subscribeToTasks } from '@/lib/firebase';
+import { getBotStatus, getPublicStatus } from '@/services/discordApi';
 import {
   collection, getDocs, query, orderBy, doc, getDoc,
-  onSnapshot,
+  onSnapshot, limit,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useSettings } from '@/contexts/SettingsContext';
@@ -479,9 +479,10 @@ interface HeaderProps {
   greeting: { text: string; emoji: string };
   stats: { total: number; completed: number; pending: number; inProgress: number };
   notifCount?: number;
+  botOnline?: boolean;
 }
 
-const DashboardHeader: React.FC<HeaderProps> = ({ greeting, stats, notifCount }) => (
+const DashboardHeader: React.FC<HeaderProps> = ({ greeting, stats, notifCount, botOnline }) => (
   <div className="col-span-12 animate-fade-up" style={{ animationDelay: '0.04s', marginBottom: 2 }}>
     <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
       <h1 style={{
@@ -503,14 +504,14 @@ const DashboardHeader: React.FC<HeaderProps> = ({ greeting, stats, notifCount })
           display: 'inline-block', width: 5, height: 5, borderRadius: '50%',
           background: 'var(--dh-online)', boxShadow: '0 0 8px var(--dh-online)',
         }} />
-        Sistema operativo
+        {botOnline ? 'Luna NET en línea' : 'Luna NET sin conexión'}
       </span>
       <span style={{ color: 'var(--dh-text-3)' }}>·</span>
       <span>{stats.total} {stats.total === 1 ? 'tarea' : 'tareas'} · {stats.completed} completadas</span>
       {notifCount ? (
         <>
           <span style={{ color: 'var(--dh-text-3)' }}>·</span>
-          <span style={{ color: 'var(--dh-warn)', fontWeight: 600 }}>{notifCount} anuncios nuevos</span>
+          <span style={{ color: 'var(--dh-warn)', fontWeight: 600 }}>{notifCount} {notifCount === 1 ? 'anuncio' : 'anuncios'} esta semana</span>
         </>
       ) : null}
     </p>
@@ -954,6 +955,7 @@ const RecentActivity: React.FC<{ items: ActivityItem[] }> = ({ items: fallbackIt
       const q = query(
         collection(db, 'activityLogs'),
         orderBy('createdAt', 'desc'),
+        limit(10),
       );
       unsub = onSnapshot(
         q,
@@ -1309,11 +1311,14 @@ const SystemHealth: React.FC<{ botOnline: boolean }> = ({ botOnline }) => {
   const [useFirestore, setUseFirestore] = useState(false);
   const [lastChecked, setLastChecked]   = useState<Date>(new Date());
 
+  // Sin métricas en Firestore se miden en vivo: antes se mostraban valores
+  // fijos ("Workers 3/3", "Base de datos Conectada") pasara lo que pasara.
+  const [medidas, setMedidas] = useState<{ apiMs: number | null; apiOk: boolean; ping: number | null; dbOk: boolean }>(
+    { apiMs: null, apiOk: false, ping: null, dbOk: true });
   const fallbackMetrics: HealthMetric[] = [
-    { label: 'API Latencia',   value: '—',                             ok: true },
-    { label: 'Base de datos',  value: 'Conectada',                     ok: true },
-    { label: 'Discord WS',     value: botOnline ? 'Activo' : 'Caído', ok: botOnline },
-    { label: 'Workers',        value: '3/3',                           ok: true },
+    { label: 'API Luna NET',  value: medidas.apiMs == null ? (medidas.apiOk ? '—' : 'Sin respuesta') : `${medidas.apiMs} ms`, ok: medidas.apiOk },
+    { label: 'Base de datos', value: medidas.dbOk ? 'Conectada' : 'Sin conexión', ok: medidas.dbOk },
+    { label: 'Discord WS',    value: botOnline ? (medidas.ping != null ? `Activo · ${medidas.ping} ms` : 'Activo') : 'Caído', ok: botOnline },
   ];
 
   const metricIcon = (label: string) => {
@@ -1325,7 +1330,17 @@ const SystemHealth: React.FC<{ botOnline: boolean }> = ({ botOnline }) => {
   };
 
   useEffect(() => {
+    const medirApi = async () => {
+      const t0 = performance.now();
+      try {
+        const st = await getPublicStatus();
+        setMedidas(m => ({ ...m, apiOk: true, apiMs: Math.round(performance.now() - t0), ping: st?.bot?.ping ?? null }));
+      } catch {
+        setMedidas(m => ({ ...m, apiOk: false, apiMs: null, ping: null }));
+      }
+    };
     const fetchHealth = async () => {
+      medirApi();
       try {
         // Intentamos leer un único documento con todas las métricas
         const metaDoc = await getDoc(doc(db, 'system_health', 'metrics'));
@@ -1357,8 +1372,12 @@ const SystemHealth: React.FC<{ botOnline: boolean }> = ({ botOnline }) => {
             setUseFirestore(false);
           }
         }
-      } catch {
+        setMedidas(m => ({ ...m, dbOk: true }));
+      } catch (e) {
         setUseFirestore(false);
+        // Sin permiso para system_health no es "sin conexión"; sí lo es un error de red.
+        const code = (e as { code?: string } | null)?.code;
+        setMedidas(m => ({ ...m, dbOk: code !== 'unavailable' }));
       } finally {
         setLoading(false);
         setLastChecked(new Date());
@@ -1507,12 +1526,23 @@ const LoadingSkeleton = () => (
   </div>
 );
 
+// El Panel CEO guarda el orden de los banners en `orden`; los que no lo tienen
+// (anteriores a eso) van al final, del más nuevo al más viejo.
+const ordenarBanners = <T extends { orden?: number; creadoEn?: { toMillis?: () => number } }>(lista: T[]): T[] =>
+  [...lista].sort((a, b) => {
+    const oa = typeof a.orden === 'number' ? a.orden : Number.MAX_SAFE_INTEGER;
+    const ob = typeof b.orden === 'number' ? b.orden : Number.MAX_SAFE_INTEGER;
+    if (oa !== ob) return oa - ob;
+    return (b.creadoEn?.toMillis?.() ?? 0) - (a.creadoEn?.toMillis?.() ?? 0);
+  });
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 const DashboardHome: React.FC = () => {
   useSettings();
 
   const [tasks,         setTasks]         = useState<Task[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [anunciosSemana, setAnunciosSemana] = useState(0);
   const [botStatus,     setBotStatus]     = useState<any>(null);
   const [loading,       setLoading]       = useState(true);
 
@@ -1572,25 +1602,37 @@ const DashboardHome: React.FC = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [tasksData, annData, botData, bannerSnap, configSnap] = await Promise.all([
-          getTasks(),
+        const [annData, botData] = await Promise.all([
           getAnnouncements(),
           getBotStatus().catch(() => ({ status: 'offline' })),
-          getDocs(query(collection(db, 'dashboard_banners'), orderBy('creadoEn', 'desc'))),
-          getDoc(doc(db, 'dashboard_config', 'banner_settings')),
         ]);
-        setTasks(tasksData as Task[]);
         setAnnouncements(annData as Announcement[]);
+        const haceUnaSemana = Date.now() - 7 * 24 * 3600 * 1000;
+        setAnunciosSemana((annData as { createdAt?: { toDate?: () => Date } | string | number }[]).filter(a => {
+          const f = a.createdAt;
+          const d = typeof f === 'object' ? f?.toDate?.() : f ? new Date(f) : undefined;
+          return !!d && d.getTime() > haceUnaSemana;
+        }).length);
         setBotStatus(botData);
-        setBanners(bannerSnap.docs.map(d => ({ id: d.id, ...d.data() } as Banner)));
-        if (configSnap.exists()) setBannerConfig(c => ({ ...c, ...configSnap.data() }));
       } catch (e) { console.error(e); }
       finally { setLoading(false); }
     };
 
     fetchData();
+    // Tareas, banners y su configuración en vivo: lo que guarde el Panel CEO se
+    // ve acá sin recargar (antes las tareas se pedían dos veces y los banners una).
     const unsub = subscribeToTasks(setTasks);
-    return () => unsub();
+    const unsubBanners = onSnapshot(collection(db, 'dashboard_banners'),
+      snap => setBanners(ordenarBanners(snap.docs.map(d => ({ id: d.id, ...d.data() } as Banner)))),
+      err => console.error('banners:', err));
+    const unsubConfig = onSnapshot(doc(db, 'dashboard_config', 'banner_settings'), snap => {
+      if (!snap.exists()) return;
+      const cfg = snap.data();
+      setBannerConfig(c => ({ ...c, ...cfg }));
+      // El Panel CEO decide si los banners pasan solos.
+      if (typeof cfg.autoplay === 'boolean') setIsPlaying(cfg.autoplay);
+    }, err => console.error('banner_settings:', err));
+    return () => { unsub(); unsubBanners(); unsubConfig(); };
   }, []);
 
   const getGreeting = () => {
@@ -1611,7 +1653,8 @@ const DashboardHome: React.FC = () => {
         <DashboardHeader
           greeting={getGreeting()}
           stats={stats}
-          notifCount={announcements.length}
+          notifCount={anunciosSemana}
+          botOnline={botOnline}
         />
 
         {/* ── Stat Cards ── */}
@@ -1625,26 +1668,18 @@ const DashboardHome: React.FC = () => {
               value={stats.completed}
               icon={<CheckCircle2 size={15} />}
               delay={0.15}
-              trend="up"
-              trendValue="+12%"
-              sparkline={[2, 4, 3, 8, 6, stats.completed]}
             />
             <StatCard
               label="En Progreso"
               value={stats.inProgress}
               icon={<Activity size={15} />}
               delay={0.2}
-              trend="neutral"
-              sparkline={[1, 2, 1, 3, 2, stats.inProgress]}
             />
             <StatCard
               label="Pendientes"
               value={stats.pending}
               icon={<Clock size={15} />}
               delay={0.25}
-              trend="down"
-              trendValue="-5%"
-              sparkline={[5, 4, 6, 5, 7, stats.pending]}
             />
             <StatusCard online={botOnline} delay={0.3} />
           </div>

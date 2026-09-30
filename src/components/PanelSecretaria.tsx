@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { db } from '@/lib/firebase';
+import { db, logActivity as registrarActividad } from '@/lib/firebase';
 import {
   collection, addDoc, deleteDoc, doc, onSnapshot,
-  query, orderBy, serverTimestamp, updateDoc, where,
+  query, orderBy, serverTimestamp, updateDoc, limit,
 } from 'firebase/firestore';
 import { useAuth } from '@/contexts/AuthContext';
 import type { SecretaryDocument, ActivityRecord, DocStatus } from '@/types';
@@ -78,21 +78,24 @@ export default function PanelSecretaria() {
   }, []);
 
   // ── Cargar actividades ───────────────────────────────────────────────────
+  // El registro es `activityLogs` (el mismo de todo el portal). Las reglas de
+  // Firestore solo dejan leerlo a CEO y Administración; se filtra por módulo
+  // acá para no depender de un índice compuesto.
+  const puedeVerActividad = isCEO || isAdmin;
   useEffect(() => {
-    const q = query(
-      collection(db, 'activity_log'),
-      where('module', '==', 'secretaria'),
-      orderBy('createdAt', 'desc'),
-    );
+    if (!puedeVerActividad) return;
+    const q = query(collection(db, 'activityLogs'), orderBy('createdAt', 'desc'), limit(300));
     const unsub = onSnapshot(q, snap => {
-      const data = snap.docs.map(d => {
-        const raw = d.data();
-        return { ...raw, id: d.id, createdAt: raw.createdAt?.toDate?.() ?? new Date() } as ActivityRecord;
-      });
+      const data = snap.docs
+        .filter(d => d.data().module === 'secretaria')
+        .map(d => {
+          const raw = d.data();
+          return { ...raw, id: d.id, createdAt: raw.createdAt?.toDate?.() ?? new Date() } as ActivityRecord;
+        });
       setActivities(data);
-    });
+    }, () => setActivities([]));
     return () => unsub();
-  }, []);
+  }, [puedeVerActividad]);
 
   const showToast = useCallback((type: 'success' | 'error', msg: string) => {
     setToast({ type, msg });
@@ -101,13 +104,7 @@ export default function PanelSecretaria() {
 
   const logActivity = async (action: string, description: string) => {
     try {
-      await addDoc(collection(db, 'activity_log'), {
-        action, description,
-        userId:   currentUser?.uid,
-        userName: userProfile?.displayName,
-        module:   'secretaria',
-        createdAt: serverTimestamp(),
-      });
+      await registrarActividad(action, {}, currentUser?.uid ?? '', userProfile?.displayName ?? '', { module: 'secretaria', description });
     } catch { /* no bloquear si el log falla */ }
   };
 
@@ -460,7 +457,7 @@ export default function PanelSecretaria() {
           {activities.length === 0 ? (
             <div className="py-16 text-center">
               <Activity className="w-10 h-10 text-zinc-800 mx-auto mb-4" strokeWidth={1} />
-              <p className="text-zinc-500 text-sm font-light">Sin actividad registrada</p>
+              <p className="text-zinc-500 text-sm font-light">{puedeVerActividad ? 'Sin actividad registrada' : 'El historial de actividad solo lo ven CEO y Administración'}</p>
             </div>
           ) : (
             <div className="divide-y divide-zinc-900/60">

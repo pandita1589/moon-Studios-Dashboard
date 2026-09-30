@@ -23,7 +23,7 @@ import {
   LayoutDashboard, Calendar, Megaphone, Bot, Bell,
   Settings, LogOut, Moon, Crown, ChevronLeft, ChevronRight,
   AlertCircle, X, Mail, MessagesSquare, GitBranch, MessageSquare,
-  Calculator, Globe, Menu, Code2, Palette, FileText, UserCog, ShieldCheck,
+  Calculator, Globe, Menu, Code2, Palette, FileText, UserCog, Users, ShieldCheck,
   CheckCheck, Inbox, Trash2, BellOff, FolderKanban
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
@@ -379,7 +379,7 @@ const GLOBAL_STYLES = `
     transform: translateY(-50%);
     width: 3px;
     border-radius: 0 2px 2px 0;
-    background: var(--accent);
+    background: var(--accent-user, #6366f1);
     transition: height 0.25s cubic-bezier(0.4,0,0.2,1), opacity 0.2s ease;
   }
   .nav-item-hover:hover {
@@ -402,7 +402,7 @@ const GLOBAL_STYLES = `
     background: var(--border-main);
   }
   .sidebar-badge {
-    background: var(--accent);
+    background: var(--accent-user, #6366f1);
     color: #000;
     font-size: 9px;
     font-weight: 600;
@@ -743,7 +743,7 @@ const NotifPanel: React.FC<NotifPanelProps> = memo(({
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <span style={{ color: 'var(--content-primary)', fontSize: '13px', fontWeight: 400, letterSpacing: '-0.01em' }}>Notificaciones</span>
                   {visibleUnread > 0 && (
-                    <span style={{ fontSize: '9px', fontWeight: 600, background: 'var(--accent)', color: '#fff', padding: '2px 7px', borderRadius: '20px', animation: 'badgePop 0.3s cubic-bezier(0.22,1,0.36,1)', letterSpacing: '0.03em' }}>
+                    <span style={{ fontSize: '9px', fontWeight: 600, background: 'var(--accent-user, #6366f1)', color: '#fff', padding: '2px 7px', borderRadius: '20px', animation: 'badgePop 0.3s cubic-bezier(0.22,1,0.36,1)', letterSpacing: '0.03em' }}>
                       {visibleUnread} nuevas
                     </span>
                   )}
@@ -997,8 +997,7 @@ SidebarNavLink.displayName = 'SidebarNavLink';
 // MAIN LAYOUT
 // ═══════════════════════════════════════════════════════════════════════════════
 const DashboardLayout: React.FC = () => {
-  const { currentUser, userProfile, isCEO, isContador, isProgramacion, loading } = useAuth();
-  const role = userProfile?.role ?? '';
+  const { currentUser, userProfile, loading, puede } = useAuth();
   const { settings, toggleSidebar } = useSettings();
   const navigate = useNavigate();
   const location = useLocation();
@@ -1019,7 +1018,8 @@ const DashboardLayout: React.FC = () => {
     const body = document.body;
 
     // ── 1. COLOR DE ACENTO ──────────────────────────────────────────
-    root.style.setProperty('--accent', settings.accentColor || '#6366f1');
+    // Ver SettingsContext: el acento del usuario no pisa el --accent de shadcn.
+    root.style.setProperty('--accent-user', settings.accentColor || '#6366f1');
 
     // ── 2. TAMAÑO DE FUENTE ─────────────────────────────────────────
     const fsMap: Record<string, string> = {
@@ -1127,6 +1127,7 @@ const DashboardLayout: React.FC = () => {
   const { notifications, unreadCount, readIds, markOneRead, markAllRead, markPanelSeen } =
     useNotifications({
       uid: currentUser?.uid,
+      puedeVerMensajeria: puede('admin'),
       soundType: settings.notificationSound ?? 'default',
       soundVolume: settings.notificationVolume ?? 0.7,
       muted: settings.notificationsMuted ?? false,
@@ -1175,8 +1176,7 @@ const DashboardLayout: React.FC = () => {
     if (notifOpen) { setNotifOpen(false); return; }
     markPanelSeen();
     setNotifOpen(true);
-    setTimeout(() => markAllRead(), 1500);
-  }, [notifOpen, markPanelSeen, markAllRead]);
+  }, [notifOpen, markPanelSeen]);
 
   const navItems = [
     { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, show: true },
@@ -1186,15 +1186,17 @@ const DashboardLayout: React.FC = () => {
     { path: '/dashboard/correo', label: 'Correo', icon: Mail, show: true, badge: unreadMails },
     { path: '/dashboard/hilos', label: 'Hilos', icon: GitBranch, show: true },
     { path: '/dashboard/mensajeria', label: 'Mensajería', icon: MessagesSquare, show: true },
-    { path: '/dashboard/webs', label: 'Webs', icon: Globe, show: isCEO || role === 'Administración' },
+    { path: '/dashboard/webs', label: 'Webs', icon: Globe, show: puede('webs') },
     { path: '/dashboard/proyectos',    label: 'Proyectos',    icon: FolderKanban,    show: true },
-    { path: '/dashboard/ceo-panel', label: 'Panel CEO', icon: Crown, show: isCEO },
-    { path: '/dashboard/admin', label: 'Panel Admin', icon: ShieldCheck, show: role === 'Administración' },
-    { path: '/dashboard/roles', label: 'Gestión Roles', icon: UserCog, show: role === 'Administración' },
-    { path: '/dashboard/contador', label: 'Contador', icon: Calculator, show: isContador },
-    { path: '/dashboard/programacion', label: 'Programación', icon: Code2, show: isProgramacion },
-    { path: '/dashboard/diseno', label: 'Diseño', icon: Palette, show: role === 'Diseño' },
-    { path: '/dashboard/secretaria', label: 'Secretaría', icon: FileText, show: role === 'Secretaría' },
+    // Cada panel se muestra según ROLE_PERMISSIONS (src/types): el CEO los ve todos.
+    { path: '/dashboard/ceo-panel', label: 'Panel CEO', icon: Crown, show: puede('ceo') },
+    { path: '/dashboard/admin', label: 'Panel Admin', icon: ShieldCheck, show: puede('admin') },
+    { path: '/dashboard/roles', label: 'Gestión Roles', icon: UserCog, show: puede('roles') },
+    { path: '/dashboard/users', label: 'Usuarios', icon: Users, show: puede('admin') },
+    { path: '/dashboard/contador', label: 'Contador', icon: Calculator, show: puede('contador') },
+    { path: '/dashboard/programacion', label: 'Programación', icon: Code2, show: puede('programacion') },
+    { path: '/dashboard/diseno', label: 'Diseño', icon: Palette, show: puede('diseno') },
+    { path: '/dashboard/secretaria', label: 'Secretaría', icon: FileText, show: puede('secretaria') },
     { path: '/dashboard/settings', label: 'Configuración', icon: Settings, show: true },
   ].filter(i => i.show);
 
@@ -1349,7 +1351,7 @@ const DashboardLayout: React.FC = () => {
           className="online-dot-pulse"
           style={{
             width: '6px', height: '6px', borderRadius: '50%',
-            background: 'var(--accent)', flexShrink: 0,
+            background: 'var(--accent-user, #6366f1)', flexShrink: 0,
           }}
         />
       </div>
@@ -1458,7 +1460,7 @@ const DashboardLayout: React.FC = () => {
                   </div>
                   <div
                     className="online-dot-pulse"
-                    style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--accent)', flexShrink: 0 }}
+                    style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--accent-user, #6366f1)', flexShrink: 0 }}
                   />
                 </div>
               )}

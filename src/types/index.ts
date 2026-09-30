@@ -21,15 +21,23 @@ export type Permission =
   | 'webs'
   | 'ceo';
 
+// Quién ve qué panel. El menú lateral, las rutas y la tabla de "Gestión Roles"
+// leen de acá: antes cada uno tenía su propio `role === '…'` y el CEO se
+// quedaba fuera de Admin, Roles, Contador, Programación, Diseño y Secretaría
+// aunque este mapa ya decía que los tenía.
+// Administración conserva exactamente lo que veía (Admin, Roles, Webs).
 export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   CEO:            ['roles', 'admin', 'diseno', 'secretaria', 'programacion', 'contador', 'webs', 'ceo'],
-  Administración: ['admin', 'diseno', 'secretaria', 'programacion', 'contador', 'webs'],
+  Administración: ['admin', 'roles', 'webs'],
   Diseño:         ['diseno'],
   Secretaría:     ['secretaria'],
   Programación:   ['programacion'],
   Contador:       ['contador'],
   Empleado:       [],
 };
+
+export const tienePermiso = (role: string | null | undefined, permiso: Permission): boolean =>
+  !!role && (ROLE_PERMISSIONS[role as UserRole]?.includes(permiso) ?? false);
 
 // ── Logs / Auditoría ─────────────────────────────────────────────────────────
 
@@ -90,7 +98,8 @@ export interface ActivityRecord {
 
 // ── Panel Programación ───────────────────────────────────────────────────────
 
-export type ProjectStatus = 'planning' | 'active' | 'paused' | 'completed' | 'cancelled';
+// Proyectos usa 'archived' y Programación 'cancelled'; los dos paneles aceptan ambos.
+export type ProjectStatus = 'planning' | 'active' | 'paused' | 'completed' | 'cancelled' | 'archived';
 
 export type ChangeType = 'feature' | 'bugfix' | 'refactor' | 'docs' | 'hotfix';
 

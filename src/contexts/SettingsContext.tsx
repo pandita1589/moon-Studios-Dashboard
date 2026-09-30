@@ -200,7 +200,11 @@ function applySettingsToDom(s: Settings) {
   }
 
   // ── Color de acento ──
-  root.style.setProperty('--accent',         s.accentColor ?? '#6366f1');
+  // El color elegido va en --accent-user (y --accent-color, que usan los anillos
+  // de foco). NO en --accent: esa es la variable HSL de shadcn (hsl(var(--accent))),
+  // y un hex ahí rompía bg-accent, hover:bg-accent y la selección del Correo.
+  root.style.setProperty('--accent-user',    s.accentColor ?? '#6366f1');
+  root.style.setProperty('--accent-color',   s.accentColor ?? '#6366f1');
   root.style.setProperty('--accent-hover',   (s.accentColor ?? '#6366f1') + 'cc');
   root.style.setProperty('--settings-accent', s.accentColor ?? '#6366f1');
 

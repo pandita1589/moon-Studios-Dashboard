@@ -5,9 +5,11 @@ import { supabase } from '@/lib/supabaseclient';
 import {
   collection, addDoc, updateDoc, doc,
   onSnapshot, query, orderBy, where, Timestamp,
-  increment, getDoc, writeBatch, limit, startAfter,
-  DocumentSnapshot, getDocs, deleteField, setDoc
+  increment, getDoc, writeBatch, limit,
+  getDocs, deleteField, setDoc,
+  arrayUnion,
 } from 'firebase/firestore';
+import { claveMiRespuesta } from '@/hooks/useNotifications';
 import { motion, AnimatePresence, useScroll, useSpring } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -171,7 +173,6 @@ const HilosComponent: React.FC = () => {
   const repliesEndRef = useRef<HTMLDivElement>(null);
   const replyTextRef = useRef<HTMLTextAreaElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const lastReplyDocRef = useRef<DocumentSnapshot | null>(null);
 
   /* ─── Scroll progress ─── */
   const { scrollYProgress } = useScroll({ container: containerRef });
@@ -243,34 +244,36 @@ const HilosComponent: React.FC = () => {
   /* ═══════════════════════════════
      FIRESTORE — replies paginados
   ═══════════════════════════════ */
-  const loadReplies = useCallback(async (hiloId: string, loadMore = false) => {
-    if (!loadMore) {
-      setLoadingReplies(true); setReplies([]);
-      lastReplyDocRef.current = null; setHasMoreReplies(true);
-    } else { setLoadingMore(true); }
-
-    try {
-      let q = query(
-        collection(db, 'hilos', hiloId, 'replies'),
-        orderBy('createdAt', 'asc'),
-        limit(REPLIES_PER_PAGE)
-      );
-      if (loadMore && lastReplyDocRef.current)
-        q = query(q, startAfter(lastReplyDocRef.current));
-
-      const snap = await getDocs(q);
-      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Reply));
-      if (snap.docs.length < REPLIES_PER_PAGE) setHasMoreReplies(false);
-      if (snap.docs.length > 0) lastReplyDocRef.current = snap.docs[snap.docs.length - 1];
-      setReplies(prev => loadMore ? [...prev, ...data] : data);
-    } catch (error) { console.error('Error loading replies:', error); }
-    finally { setLoadingReplies(false); setLoadingMore(false); }
+  // En vivo: antes se leían una sola vez, así que la respuesta que acababas de
+  // publicar (y las de los demás) no aparecía hasta volver a abrir el hilo.
+  // "Cargar más" amplía el límite de la misma escucha.
+  // Las páginas van ligadas al hilo abierto: al cambiar de hilo se vuelve a 1.
+  const [paginas, setPaginas] = useState<{ hiloId?: string; n: number }>({ n: 1 });
+  const paginasReplies = paginas.hiloId === selectedHilo?.id ? paginas.n : 1;
+  const loadReplies = useCallback((hiloId: string, loadMore = false) => {
+    if (!loadMore) return;
+    setLoadingMore(true);
+    setPaginas(p => ({ hiloId, n: (p.hiloId === hiloId ? p.n : 1) + 1 }));
   }, []);
 
   useEffect(() => {
     if (!selectedHilo) { setReplies([]); return; }
-    loadReplies(selectedHilo.id);
-  }, [selectedHilo?.id]);
+    setLoadingReplies(true);
+    const tope = REPLIES_PER_PAGE * paginasReplies;
+    const q = query(
+      collection(db, 'hilos', selectedHilo.id, 'replies'),
+      orderBy('createdAt', 'asc'),
+      limit(tope)
+    );
+    return onSnapshot(q, snap => {
+      setReplies(snap.docs.map(d => ({ id: d.id, ...d.data() } as Reply)));
+      setHasMoreReplies(snap.docs.length >= tope);
+      setLoadingReplies(false); setLoadingMore(false);
+    }, error => {
+      console.error('Error loading replies:', error);
+      setLoadingReplies(false); setLoadingMore(false);
+    });
+  }, [selectedHilo?.id, paginasReplies]);
 
   /* ─── viewCount ─── */
   useEffect(() => {
@@ -486,9 +489,13 @@ const HilosComponent: React.FC = () => {
       const batch = writeBatch(db);
       const replyRef = doc(collection(db, 'hilos', selectedHilo.id, 'replies'));
       batch.set(replyRef, replyData);
+      const ahora = Timestamp.now();
       batch.update(doc(db, 'hilos', selectedHilo.id), {
-        replyCount: increment(1), updatedAt: Timestamp.now(), lastReplyAt: Timestamp.now()
+        replyCount: increment(1), updatedAt: ahora, lastReplyAt: ahora,
+        // Quien responde queda siguiendo el hilo (las reglas lo permiten).
+        subscribers: arrayUnion(uid),
       });
+      try { localStorage.setItem(claveMiRespuesta(uid, selectedHilo.id), String(ahora.toMillis())); } catch { /* sin storage */ }
       await batch.commit();
       if (mentions.length > 0) {
         await addDoc(collection(db, 'notifications'), {

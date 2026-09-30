@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
+import type { Permission } from '@/types';
 import { SettingsProvider } from '@/contexts/SettingsContext';
 import Login from '@/components/Login';
 import DashboardLayout from '@/components/DashboardLayout';
@@ -24,6 +25,7 @@ import PanelRoles      from '@/components/PanelRoles';
 import PanelSecretaria from '@/components/PanelSecretaria';
 import TitleBar from '@/components/TitleBar';
 import UpdateNotifier from '@/components/UpdateNotifier';
+import { Toaster } from 'sonner';
 
 // Hook para detectar Tauri
 const useIsTauri = () => {
@@ -52,15 +54,11 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
   return <>{children}</>;
 };
 
-interface RoleRouteProps {
-  children: React.ReactNode;
-  allowedRoles: string[];
-}
-const RoleRoute: React.FC<RoleRouteProps> = ({ children, allowedRoles }) => {
-  const { userProfile, loading } = useAuth();
+// Entra quien tenga el permiso del panel en ROLE_PERMISSIONS (el CEO, a todos).
+const PermisoRoute: React.FC<{ children: React.ReactNode; permiso: Permission }> = ({ children, permiso }) => {
+  const { loading, puede } = useAuth();
   if (loading) return <PageLoader />;
-  const role = userProfile?.role ?? '';
-  if (!allowedRoles.includes(role)) return <Navigate to="/dashboard" replace />;
+  if (!puede(permiso)) return <Navigate to="/dashboard" replace />;
   return <>{children}</>;
 };
 
@@ -85,6 +83,9 @@ function App() {
         <UpdateNotifier />
         {/* TitleBar solo aparece en Tauri */}
         <TitleBar />
+        {/* Avisos flotantes (toast). Muchos paneles llaman a toast() de sonner,
+            pero el Toaster no estaba montado: ningún aviso se veía. */}
+        <Toaster theme="dark" richColors closeButton position="bottom-right" offset={{ top: titleBarHeight + 12, bottom: 16 }} />
 
 
         {/* Contenido: top dinámico según si hay TitleBar o no */}
@@ -110,15 +111,15 @@ function App() {
                 <Route path="mensajeria"    element={<Mensajeria />} />
                 <Route path="proyectos" element={<Proyectos />} />
                 <Route path="settings"      element={<Settings />} />
-                <Route path="webs"          element={<Webs />} />
-                <Route path="users"         element={<RoleRoute allowedRoles={['Administración']}><Users /></RoleRoute>} />
-                <Route path="ceo-panel"     element={<RoleRoute allowedRoles={['CEO']}><CEOPanel /></RoleRoute>} />
-                <Route path="contador"      element={<RoleRoute allowedRoles={['Contador']}><Contador /></RoleRoute>} />
-                <Route path="programacion"  element={<RoleRoute allowedRoles={['Programación']}><PanelProgramacion /></RoleRoute>} />
-                <Route path="admin"         element={<RoleRoute allowedRoles={['Administración']}><PanelAdmin /></RoleRoute>} />
-                <Route path="diseno"        element={<RoleRoute allowedRoles={['Diseño']}><PanelDiseno /></RoleRoute>} />
-                <Route path="roles"         element={<RoleRoute allowedRoles={['Administración']}><PanelRoles /></RoleRoute>} />
-                <Route path="secretaria"    element={<RoleRoute allowedRoles={['Secretaría']}><PanelSecretaria /></RoleRoute>} />
+                <Route path="webs"          element={<PermisoRoute permiso="webs"><Webs /></PermisoRoute>} />
+                <Route path="users"         element={<PermisoRoute permiso="admin"><Users /></PermisoRoute>} />
+                <Route path="ceo-panel"     element={<PermisoRoute permiso="ceo"><CEOPanel /></PermisoRoute>} />
+                <Route path="contador"      element={<PermisoRoute permiso="contador"><Contador /></PermisoRoute>} />
+                <Route path="programacion"  element={<PermisoRoute permiso="programacion"><PanelProgramacion /></PermisoRoute>} />
+                <Route path="admin"         element={<PermisoRoute permiso="admin"><PanelAdmin /></PermisoRoute>} />
+                <Route path="diseno"        element={<PermisoRoute permiso="diseno"><PanelDiseno /></PermisoRoute>} />
+                <Route path="roles"         element={<PermisoRoute permiso="roles"><PanelRoles /></PermisoRoute>} />
+                <Route path="secretaria"    element={<PermisoRoute permiso="secretaria"><PanelSecretaria /></PermisoRoute>} />
               </Route>
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

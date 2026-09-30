@@ -2,8 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { db } from '@/lib/firebase';
 import {
   collection, onSnapshot, query, orderBy, limit,
-  getDocs, where, writeBatch, Timestamp,
-  getCountFromServer,
+  getDocs, getCountFromServer,
 } from 'firebase/firestore';
 import { useAuth } from '@/contexts/AuthContext';
 import type { SystemLog, LogLevel, UserRole } from '@/types';
@@ -11,7 +10,7 @@ import {
   ShieldCheck, Search, AlertTriangle, Info, CheckCircle2,
   XCircle, Users, Settings, BarChart3, Database,
   RefreshCw, Download, Terminal, Layers, Server, Lock,
-  Trash2, Activity, ChevronDown, Clock,
+  Activity, ChevronDown, Clock,
   AlertCircle, Eye, Package,
   X,
 } from 'lucide-react';
@@ -44,11 +43,10 @@ const COLLECTIONS: { id: string; label: string; color: string }[] = [
   { id: 'dev_tasks',       label: 'Tareas dev',        color: '#818cf8' },
   { id: 'diseno_media',    label: 'Archivos diseño',   color: '#c084fc' },
   { id: 'secretaria_docs', label: 'Documentos',        color: '#4ade80' },
-  { id: 'activity_log',    label: 'Actividad',         color: '#f59e0b' },
-  { id: 'system_logs',     label: 'Logs',              color: '#9ca3af' },
+  { id: 'activityLogs',    label: 'Actividad',         color: '#f59e0b' },
+  { id: 'userActivityLogs', label: 'Accesos',          color: '#9ca3af' },
   { id: 'bug_reports',     label: 'Bug Reports',       color: '#fb923c' },
   { id: 'maintenance',     label: 'Mantenimiento',     color: '#34d399' },
-  { id: 'incidents',       label: 'Incidentes',        color: '#f87171' },
 ];
 
 const ROLE_ORDER: UserRole[] = ['CEO', 'Administración', 'Diseño', 'Secretaría', 'Programación', 'Contador', 'Empleado'];
@@ -93,6 +91,14 @@ function exportCSV(data: any[], filename: string) {
   URL.revokeObjectURL(url);
 }
 
+// Un registro de `activityLogs` con la forma que usa este panel. Los viejos
+// (del Panel CEO antes de unificar) solo tenían action/details/timestamp.
+function aLogEntry(id: string, r: any): LogEntry {
+  const fecha = r.createdAt?.toDate?.() ?? r.timestamp?.toDate?.() ?? new Date();
+  const texto = r.message ?? r.description ?? r.action ?? 'Actividad';
+  return { ...r, id, createdAt: fecha, message: texto, level: r.level ?? 'info', module: r.module ?? 'system' } as LogEntry;
+}
+
 // ─── Componente ──────────────────────────────────────────────────────────────
 export default function PanelAdmin() {
   const { currentUser, userProfile } = useAuth();
@@ -106,26 +112,26 @@ export default function PanelAdmin() {
   const [filterLevel,    setFilterLevel]    = useState<LogLevel | 'all'>('all');
   const [filterModule,   setFilterModule]   = useState<string>('all');
   const [loadingStats,   setLoadingStats]   = useState(false);
-  const [deletingLogs,   setDeletingLogs]   = useState(false);
   const [logLimit,       setLogLimit]       = useState(200);
   const [expandedLog,    setExpandedLog]    = useState<string | null>(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
 
   // ── Suscripción real a logs ────────────────────────────────────────────────
+  // `activityLogs` es donde escribe todo el portal (lib/firebase.ts →
+  // logActivity). Antes se leía `system_logs`, que nadie escribía.
+  const [logsError, setLogsError] = useState<string | null>(null);
   useEffect(() => {
     const q = query(
-      collection(db, 'system_logs'),
+      collection(db, 'activityLogs'),
       orderBy('createdAt', 'desc'),
       limit(logLimit)
     );
     const unsub = onSnapshot(q, snap => {
-      setLogs(snap.docs.map(d => {
-        const r = d.data();
-        return { ...r, id: d.id, createdAt: r.createdAt?.toDate?.() ?? new Date() } as LogEntry;
-      }));
+      setLogs(snap.docs.map(d => aLogEntry(d.id, d.data())));
+      setLogsError(null);
       setLoading(false);
-    }, () => setLoading(false));
+    }, (err) => { setLogsError(err.message); setLoading(false); });
     return () => unsub();
   }, [logLimit]);
 
@@ -164,8 +170,8 @@ export default function PanelAdmin() {
       // Métricas de logs
       const hoy        = startOfHour(new Date());
       const hace24h    = subDays(new Date(), 1);
-      const logsSnap   = await getDocs(query(collection(db, 'system_logs'), orderBy('createdAt', 'desc'), limit(500)));
-      const allLogs    = logsSnap.docs.map(d => ({ ...d.data(), id: d.id, createdAt: d.data().createdAt?.toDate?.() ?? new Date() }));
+      const logsSnap   = await getDocs(query(collection(db, 'activityLogs'), orderBy('createdAt', 'desc'), limit(500)));
+      const allLogs    = logsSnap.docs.map(d => aLogEntry(d.id, d.data()));
       const logsHoy    = allLogs.filter((l: any) => isAfter(l.createdAt, hace24h)).length;
       const logsHora   = allLogs.filter((l: any) => isAfter(l.createdAt, hoy)).length;
       const errores    = allLogs.filter((l: any) => l.level === 'error').length;
@@ -182,33 +188,6 @@ export default function PanelAdmin() {
   useEffect(() => {
     if (activeTab === 'estadisticas') loadStats();
   }, [activeTab, loadStats]);
-
-  // ── Limpiar logs ──────────────────────────────────────────────────────────
-  const handleClearLogs = async (tipo: 'all' | 'errors' | 'old') => {
-    if (!confirm(
-      tipo === 'all'    ? '¿Eliminar TODOS los logs del sistema? Esta acción es irreversible.' :
-      tipo === 'errors' ? '¿Eliminar todos los logs de error?' :
-      '¿Eliminar logs de hace más de 30 días?'
-    )) return;
-    setDeletingLogs(true);
-    try {
-      let q;
-      if (tipo === 'all')    q = query(collection(db, 'system_logs'), limit(500));
-      else if (tipo === 'errors') q = query(collection(db, 'system_logs'), where('level', '==', 'error'), limit(500));
-      else {
-        const hace30 = Timestamp.fromDate(subDays(new Date(), 30));
-        q = query(collection(db, 'system_logs'), where('createdAt', '<', hace30), limit(500));
-      }
-      const snap  = await getDocs(q);
-      const batch = writeBatch(db);
-      snap.docs.forEach(d => batch.delete(d.ref));
-      await batch.commit();
-    } catch (err: any) {
-      console.error('clearLogs:', err);
-    } finally {
-      setDeletingLogs(false);
-    }
-  };
 
   // ── Exportar ──────────────────────────────────────────────────────────────
   const handleExport = (format_: 'json' | 'csv') => {
@@ -296,32 +275,6 @@ export default function PanelAdmin() {
               )}
             </div>
 
-            {/* Limpiar logs */}
-            <div className="relative group">
-              <button disabled={deletingLogs}
-                className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-light transition-all"
-                style={{ background: 'rgba(248,113,113,0.06)', border: '1px solid rgba(248,113,113,0.2)', color: '#f87171' }}>
-                {deletingLogs
-                  ? <RefreshCw className="w-3.5 h-3.5 animate-spin" strokeWidth={1.5} />
-                  : <Trash2 className="w-3.5 h-3.5" strokeWidth={1.5} />}
-                Limpiar
-              </button>
-              {/* Dropdown limpiar */}
-              <div className="absolute right-0 top-full mt-1 w-48 rounded-xl overflow-hidden z-50 hidden group-hover:block"
-                style={{ background: '#0f0f0f', border: `1px solid rgba(248,113,113,0.2)` }}>
-                {[
-                  { key: 'errors', label: 'Solo errores' },
-                  { key: 'old',    label: 'Más de 30 días' },
-                  { key: 'all',    label: 'Todos los logs' },
-                ].map(op => (
-                  <button key={op.key} onClick={() => handleClearLogs(op.key as any)}
-                    className="w-full px-4 py-2.5 text-left text-xs font-light text-red-400 hover:bg-red-500/5 transition-colors flex items-center gap-2">
-                    <X className="w-3 h-3" strokeWidth={1.5} />
-                    {op.label}
-                  </button>
-                ))}
-              </div>
-            </div>
           </div>
         )}
       </div>
@@ -430,6 +383,12 @@ export default function PanelAdmin() {
               <div className="py-16 flex items-center justify-center gap-3">
                 <div className="w-5 h-5 border border-zinc-700 border-t-zinc-400 rounded-full animate-spin" />
                 <span className="text-zinc-600 text-sm font-light">Cargando logs en tiempo real...</span>
+              </div>
+            ) : logsError ? (
+              <div className="py-16 text-center px-4">
+                <AlertCircle className="w-10 h-10 text-red-400/70 mx-auto mb-3" strokeWidth={1} />
+                <p className="text-red-400 text-sm font-light">No se pudo leer el registro de actividad</p>
+                <p className="text-zinc-600 text-xs font-light mt-1">{logsError}</p>
               </div>
             ) : filteredLogs.length === 0 ? (
               <div className="py-16 text-center">
@@ -802,21 +761,11 @@ export default function PanelAdmin() {
               <Lock className="w-4 h-4 text-red-400" strokeWidth={1.5} />
               <p className="text-red-400 text-sm font-light">Zona de peligro</p>
             </div>
-            <p className="text-zinc-500 text-xs font-light leading-relaxed mb-4">
-              Operaciones destructivas sobre la base de datos. Ejecutar solo en caso necesario.
+            <p className="text-zinc-500 text-xs font-light leading-relaxed">
+              El registro de actividad es de solo agregar: las reglas de Firestore no permiten borrar
+              entradas desde el portal, para que nadie pueda ocultar lo que hizo. Si hace falta
+              limpiarlo, se hace desde la consola de Firebase.
             </p>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              {[
-                { label: 'Limpiar logs de error',     action: () => handleClearLogs('errors'), color: '#f59e0b' },
-                { label: 'Limpiar logs &gt; 30 días', action: () => handleClearLogs('old'),    color: '#fb923c' },
-                { label: 'Eliminar todos los logs',   action: () => handleClearLogs('all'),    color: '#f87171' },
-              ].map(op => (
-                <button key={op.label} onClick={op.action} disabled={deletingLogs}
-                  className="px-4 py-2.5 rounded-xl text-xs font-light transition-all hover:opacity-90 disabled:opacity-40"
-                  style={{ background: op.color + '10', color: op.color, border: `1px solid ${op.color}30` }}
-                  dangerouslySetInnerHTML={{ __html: op.label }} />
-              ))}
-            </div>
           </div>
         </div>
       )}

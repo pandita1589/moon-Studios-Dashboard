@@ -438,12 +438,52 @@ export const updateDiscordData = async (data: any) =>
 // ACTIVITY LOG (global del sistema, mantener compatibilidad)
 // ═══════════════════════════════════════════════════════════════════
 
-export const logActivity = async (action: string, details: any, userId: string, userName: string) =>
-  addDoc(collection(db, 'activityLogs'), { action, details, userId, userName, timestamp: Timestamp.now() });
+// Todo el registro de actividad va a `activityLogs` con el mismo formato, para
+// que lo lean igual el Inicio (description + createdAt), el Panel Admin
+// (message, level, module) y Secretaría (module). Antes cada uno usaba otra
+// colección u otros campos: lo del Panel CEO no aparecía en el Inicio (no
+// tenía createdAt), Panel Admin leía `system_logs` (que nadie escribía) y
+// Secretaría escribía en `activity_log`, que las reglas de Firestore rechazan.
+// Las reglas: cualquiera con sesión puede crear; solo CEO y Administración leen.
+const MODULO_ACCION: Record<string, string> = {
+  USER_CREATED: 'users', USER_DELETED: 'users', ROLE_CHANGED: 'users',
+  TASK_CREATED: 'admin', TASK_DELETED: 'admin', TASK_UPDATED: 'admin',
+  REPORT_DELETED: 'admin', BANNERS_CONFIG_SAVED: 'admin',
+  MESSAGE_SENT: 'discord', MAINTENANCE_ACTIVATED: 'discord', MAINTENANCE_DEACTIVATED: 'discord',
+};
+type Detalle = Record<string, unknown> | undefined;
+const TEXTO_ACCION: Record<string, (d: Detalle) => string> = {
+  USER_CREATED:            d => `Creó la cuenta de ${d?.displayName || d?.email || 'un usuario'}${d?.role ? ` (${d.role})` : ''}`,
+  USER_DELETED:            d => `Eliminó la cuenta de ${d?.userName || 'un usuario'}`,
+  ROLE_CHANGED:            d => `Cambió un rol a ${d?.newRole ?? '—'}`,
+  TASK_CREATED:            d => `Creó la tarea "${d?.title ?? ''}"`,
+  TASK_DELETED:            d => `Eliminó la tarea "${d?.title ?? ''}"`,
+  TASK_UPDATED:            d => `Editó la tarea "${d?.title ?? ''}"`,
+  REPORT_DELETED:          () => 'Eliminó un reporte de tarea',
+  BANNERS_CONFIG_SAVED:    () => 'Actualizó los banners del inicio',
+  MESSAGE_SENT:            () => 'Envió un mensaje con el bot de Discord',
+  MAINTENANCE_ACTIVATED:   d => `Activó el mantenimiento del bot${d?.reason ? `: ${d.reason}` : ''}`,
+  MAINTENANCE_DEACTIVATED: () => 'Desactivó el mantenimiento del bot',
+};
+
+export const logActivity = async (
+  action: string, details: any, userId: string, userName: string,
+  extra: { module?: string; description?: string; level?: 'info' | 'warning' | 'error' | 'success' } = {},
+) => {
+  const description = extra.description ?? TEXTO_ACCION[action]?.(details) ?? action;
+  const ahora = Timestamp.now();
+  return addDoc(collection(db, 'activityLogs'), {
+    action, details: details ?? {}, userId, userName,
+    description, message: description,
+    module: extra.module ?? MODULO_ACCION[action] ?? 'system',
+    level: extra.level ?? 'info',
+    timestamp: ahora, createdAt: ahora,
+  });
+};
 
 export const getActivityLogs = async (maxItems = 50) => {
-  const snap = await getDocs(query(collection(db, 'activityLogs'), orderBy('timestamp', 'desc')));
-  return snap.docs.map(d => ({ id: d.id, ...d.data() })).slice(0, maxItems);
+  const snap = await getDocs(query(collection(db, 'activityLogs'), orderBy('timestamp', 'desc'), limit(maxItems)));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 };
 
 // ═══════════════════════════════════════════════════════════════════

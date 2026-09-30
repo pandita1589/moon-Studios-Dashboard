@@ -36,10 +36,11 @@ import {
   LayoutGrid, LayoutList,
   ArrowUpRight, Flag, Hash, Workflow,
 } from 'lucide-react';
+import { leerCamposComunes, escribirCamposComunes } from '@/lib/devProjects';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type ProjectStatus = 'planning' | 'active' | 'paused' | 'completed' | 'archived';
+type ProjectStatus = 'planning' | 'active' | 'paused' | 'completed' | 'archived' | 'cancelled';
 type Priority      = 'low' | 'medium' | 'high' | 'critical';
 type BlockType =
   | 'text' | 'idea' | 'tree' | 'schema' | 'list'
@@ -98,6 +99,9 @@ const STATUS_CFG: Record<ProjectStatus, { label: string; color: string; icon: Re
   paused:    { label: 'Pausado',       color: '#fb923c', icon: Pause        },
   completed: { label: 'Completado',    color: '#60a5fa', icon: CheckCircle2 },
   archived:  { label: 'Archivado',     color: '#6b7280', icon: Archive      },
+  // Estado que pone Programación. Sin esta entrada, un proyecto cancelado allá
+  // rompía esta pantalla (STATUS_CFG[status] era undefined).
+  cancelled: { label: 'Cancelado',     color: '#f87171', icon: X            },
 };
 
 const PRIORITY_CFG: Record<Priority, { label: string; color: string }> = {
@@ -165,7 +169,7 @@ async function deleteCover(path?: string): Promise<void> {
 // ─── Small reusable components ────────────────────────────────────────────────
 
 const StatusBadge: React.FC<{ status: ProjectStatus; tiny?: boolean }> = ({ status, tiny }) => {
-  const { label, color, icon: Icon } = STATUS_CFG[status];
+  const { label, color, icon: Icon } = STATUS_CFG[status] ?? STATUS_CFG.planning;
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: tiny ? 3 : 4,
@@ -596,7 +600,7 @@ const Proyectos: React.FC = () => {
   useEffect(() => {
     const q = query(collection(db, 'dev_projects'), orderBy('createdAt', 'desc'));
     return onSnapshot(q, snap => {
-      setProjects(snap.docs.map(d => ({ id: d.id, ...d.data() } as Project)));
+      setProjects(snap.docs.map(d => ({ id: d.id, ...d.data(), ...leerCamposComunes(d.data()) } as unknown as Project)));
       setLoading(false);
     }, () => setLoading(false));
   }, []);
@@ -694,11 +698,11 @@ const Proyectos: React.FC = () => {
         if (pendingCover && form.coverPath && form.coverPath !== coverPath) {
           await deleteCover(form.coverPath);
         }
-        await updateDoc(doc(db, 'dev_projects', form.id), payload);
+        await updateDoc(doc(db, 'dev_projects', form.id), escribirCamposComunes(payload));
         showToast('success', 'Proyecto actualizado');
       } else {
         const ref = await addDoc(collection(db, 'dev_projects'), {
-          ...payload,
+          ...escribirCamposComunes(payload),
           createdAt: serverTimestamp(),
         });
         showToast('success', 'Proyecto creado');
