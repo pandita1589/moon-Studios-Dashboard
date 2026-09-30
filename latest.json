@@ -1,11 +1,11 @@
 {
-    "version":  "2.1.39",
-    "notes":  "Todo sincronizado en vivo: Contador, Calendario, Anuncios, Mensajeria y Panel CEO. Correo con papelera y destacados por persona. Crear tareas desde el Calendario.",
-    "pub_date":  "2026-09-29T22:43:31Z",
+    "version":  "2.1.40",
+    "notes":  "Tema claro en todos los paneles, tema Sistema completo, tablas legibles en pantallas angostas y Configuracion sin datos inventados.",
+    "pub_date":  "2026-09-29T22:55:35Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRMDZrZG4yMDRUNDdqU3FUNzhMMmQ3NVRBWEZqTitGSGwvWHRkTk9rWnVFdlhXQ0NmalY2T3A2aWJzYVR6UXdCOUJMNURJKzl5WmNHYmRnYzFHTzJCMlAzaVVQc3FxY3dzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNzM5ODEwCWZpbGU6bW9vbiBTdHVkaW9zXzIuMS4zOV94NjQtc2V0dXAuZXhlCnNGcERnU1VFbC9hRWxlV3hQMGI2cFpxR1pmUnVuU1VtVFhVemtsdHB2eWRVZFpQQ1lGUVEvV1NMQmFDbWFyUlR3R2JoT2xLTE1NNXNDRU5yUXJDUkN3PT0K",
-                                             "url":  "https://github.com/pandita1589/moon-Studios-Dashboard/releases/download/v2.1.39/moon.Studios_2.1.39_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRMDZrZG4yMDRUNDdpV2p3bmhHcVZUSVpybGlWeFI3RDE0TUJubGt4dnNWQlh2c3JWaTNBcE5ZT1RwUGFJOGQ5ekNRUFNUQjVPNlM3cCtDamtCQ2l4Kzc2YUExNFY0bEE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNzQwNTM0CWZpbGU6bW9vbiBTdHVkaW9zXzIuMS40MF94NjQtc2V0dXAuZXhlCkUxQ0F1QWlwaEo3ZDNyOG1iSzBKaVhLL01heHcyNjVQVklWTThESVJzMjUwOWp6cTM3L2VPZGxzbjlsRmtNV2tzK2VBWStTYzh1dmY0ejZaZ0FLckF3PT0K",
+                                             "url":  "https://github.com/pandita1589/moon-Studios-Dashboard/releases/download/v2.1.40/moon.Studios_2.1.40_x64-setup.exe"
                                          }
                   }
 }
