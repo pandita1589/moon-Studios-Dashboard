@@ -332,7 +332,8 @@ export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }
       updateSettings,
       toggleTheme,
       toggleSidebar,
-      isDark:             settings.theme === 'dark',
+      // Con 'system' depende del sistema operativo (el Calendario lo ignoraba).
+      isDark:             settings.theme === 'dark' || (settings.theme === 'system' && typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches),
       isSidebarCollapsed: settings.sidebarCollapsed,
     }}>
       {children}

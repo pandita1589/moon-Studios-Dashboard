@@ -1010,6 +1010,7 @@ const DashboardLayout: React.FC = () => {
   const [pageAnimClass, setPageAnimClass] = useState('');
 
   const sidebarCollapsed = settings.sidebarCollapsed;
+  const [temaSistema, setTemaSistema] = useState(0);
 
   // ─── APLICAR ESTILOS GLOBALES DESDE SETTINGS (PATCHED) ─────────────────────
  useEffect(() => {
@@ -1063,19 +1064,15 @@ const DashboardLayout: React.FC = () => {
     root.style.setProperty('--btn-hover-color',    isLight ? 'rgba(0,0,0,0.75)'       : 'rgba(255,255,255,0.75)');
 
     // ── 5. LISTENER SISTEMA ─────────────────────────────────────────
+    // Con el tema "Sistema", un cambio del sistema operativo vuelve a correr
+    // todo este efecto (temaSistema). Antes había un `return` acá: con ese
+    // tema nunca se aplicaban la fuente ni las opciones de accesibilidad, y el
+    // cambio de claro/oscuro solo actualizaba 3 de las variables.
     let mediaQuery: MediaQueryList | null = null;
+    const onSystemChange = () => setTemaSistema(n => n + 1);
     if (savedTheme === 'system') {
       mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-      const onSystemChange = (e: MediaQueryListEvent) => {
-        html.classList.remove('dark', 'light');
-        html.classList.add(e.matches ? 'dark' : 'light');
-        const light = !e.matches;
-        root.style.setProperty('--bg-main',    light ? '#f1f1f3' : '#0a0a0a');
-        root.style.setProperty('--bg-sidebar', light ? '#ffffff' : '#080808');
-        root.style.setProperty('--text-primary', light ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.85)');
-      };
       mediaQuery.addEventListener('change', onSystemChange);
-      return () => { mediaQuery!.removeEventListener('change', onSystemChange); };
     }
 
     // ── 6. FUENTE PERSONALIZADA ─────────────────────────────────────
@@ -1110,9 +1107,10 @@ const DashboardLayout: React.FC = () => {
     body.classList.toggle('reduce-motion', !!settings.reduceMotion);
 
     return () => {
+      mediaQuery?.removeEventListener('change', onSystemChange);
       body.classList.remove('compact-mode', 'no-animations', 'no-blur', 'high-contrast', 'reduce-motion');
     };
-  }, [settings]);
+  }, [settings, temaSistema]);
 
   const doLogout = useCallback(async () => {
     setPageAnimClass('__lo_page');

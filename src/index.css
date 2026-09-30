@@ -673,3 +673,82 @@ html.light [style*="background: rgba(255,255,255,0.06)"],
 html.light [style*="background: rgba(255,255,255,0.07)"] {
   background: rgba(0,0,0,0.07) !important;
 }
+/* ========== MODO CLARO: CLASES OSCURAS DE TAILWIND ==========
+   Hilos, Contador, Gestión Roles, Panel Admin, Diseño, Secretaría,
+   Mensajería y los reportes de tareas usan clases fijas del modo oscuro
+   (bg-zinc-950, text-zinc-400, border-zinc-800, text-white…). En modo claro
+   quedaban blancos sobre blanco. Esta capa las traduce a la paleta clara sin
+   tocar cada componente. Las variantes con opacidad (bg-black/60 de los
+   fondos de modal) no se tocan a propósito. */
+
+/* Texto */
+html.light .text-zinc-100, html.light .text-zinc-200, html.light .text-zinc-300 { color: rgba(0,0,0,0.8) !important; }
+html.light .text-zinc-400 { color: rgba(0,0,0,0.6) !important; }
+html.light .text-zinc-500 { color: rgba(0,0,0,0.5) !important; }
+html.light .text-zinc-600 { color: rgba(0,0,0,0.42) !important; }
+html.light .text-zinc-700, html.light .text-zinc-800 { color: rgba(0,0,0,0.3) !important; }
+html.light [class*="hover:text-white"]:hover,
+html.light [class*="group-hover:text-white"]:hover,
+html.light [class*="hover:text-zinc-2"]:hover,
+html.light [class*="hover:text-zinc-3"]:hover { color: rgba(0,0,0,0.9) !important; }
+html.light [class*="placeholder-zinc-"]::placeholder { color: rgba(0,0,0,0.35) !important; }
+
+/* Fondos */
+html.light .bg-zinc-950, html.light .bg-black { background-color: #ffffff !important; }
+html.light .bg-zinc-900 { background-color: #f6f6f8 !important; }
+html.light .bg-zinc-800 { background-color: #eeeef1 !important; }
+html.light .bg-zinc-700 { background-color: #e4e4e8 !important; }
+html.light [class*="bg-zinc-950/"], html.light [class*="bg-zinc-900/"] { background-color: rgba(0,0,0,0.03) !important; }
+html.light [class*="bg-zinc-800/"] { background-color: rgba(0,0,0,0.05) !important; }
+html.light [class*="bg-white/"] { background-color: rgba(0,0,0,0.03) !important; }
+html.light [class*="hover:bg-white/"]:hover,
+html.light [class*="hover:bg-zinc-800"]:hover,
+html.light [class*="hover:bg-zinc-900"]:hover { background-color: rgba(0,0,0,0.05) !important; }
+
+/* Botón principal (blanco con texto negro en oscuro): en claro, negro con texto blanco */
+html.light .bg-white.text-black { background-color: #111114 !important; color: #ffffff !important; }
+html.light .bg-white.text-black:hover { background-color: #26262b !important; }
+
+/* Bordes */
+html.light .border-zinc-900 { border-color: rgba(0,0,0,0.06) !important; }
+html.light .border-zinc-800 { border-color: rgba(0,0,0,0.08) !important; }
+html.light .border-zinc-700 { border-color: rgba(0,0,0,0.12) !important; }
+html.light .border-zinc-600, html.light .border-zinc-500 { border-color: rgba(0,0,0,0.18) !important; }
+html.light [class*="border-white/"] { border-color: rgba(0,0,0,0.08) !important; }
+html.light [class*="divide-zinc-"] > * + * { border-color: rgba(0,0,0,0.06) !important; }
+html.light [class*="ring-zinc-"] { --tw-ring-color: rgba(0,0,0,0.12) !important; }
+
+/* Estilos en línea: el navegador los guarda con espacios (rgba(255, 255, 255, …)),
+   así que las reglas de arriba escritas sin espacios no siempre coincidían. */
+html.light [style*="color: rgba(255, 255, 255, 0.9"],
+html.light [style*="color: rgba(255, 255, 255, 0.8"],
+html.light [style*="color: rgba(255, 255, 255, 0.7"],
+html.light [style*="color: rgb(255, 255, 255)"] { color: rgba(0,0,0,0.85) !important; }
+html.light [style*="color: rgba(255, 255, 255, 0.6"],
+html.light [style*="color: rgba(255, 255, 255, 0.5"],
+html.light [style*="color: rgba(255, 255, 255, 0.4"],
+html.light [style*="color: rgba(255, 255, 255, 0.3"],
+html.light [style*="color: rgba(255, 255, 255, 0.2"] { color: rgba(0,0,0,0.45) !important; }
+html.light [style*="background: rgba(255, 255, 255, 0.0"],
+html.light [style*="background-color: rgba(255, 255, 255, 0.0"] { background-color: rgba(0,0,0,0.03) !important; }
+html.light [style*="border: 1px solid rgba(255, 255, 255"],
+html.light [style*="border-color: rgba(255, 255, 255"] { border-color: rgba(0,0,0,0.08) !important; }
+html.light [style*="background: rgb(10, 10, 10)"],
+html.light [style*="background: rgb(13, 13, 13)"],
+html.light [style*="background: rgb(15, 15, 15)"],
+html.light [style*="background: rgb(17, 17, 17)"],
+html.light [style*="background-color: rgb(13, 13, 13)"],
+html.light [style*="background-color: rgb(15, 15, 15)"] { background: #ffffff !important; }
+
+/* ========== TABLAS EN PANTALLAS ANGOSTAS ==========
+   Las tablas de Gestión Roles, Panel Admin, Contador y Discord Bot son filas
+   "grid grid-cols-12" sin versión móvil: en una ventana angosta las columnas
+   se aplastaban hasta volverse ilegibles. Debajo de 768 px cada fila mantiene
+   un ancho mínimo y el contenedor (que tenía overflow-hidden) se desplaza en
+   horizontal. */
+@media (max-width: 767px) {
+  .grid.grid-cols-12 { min-width: 720px; }
+  .overflow-hidden:has(> .grid.grid-cols-12),
+  .overflow-hidden:has(> * > .grid.grid-cols-12),
+  .overflow-hidden:has(> * > * > .grid.grid-cols-12) { overflow-x: auto !important; }
+}

@@ -27,10 +27,10 @@ import {
   Camera, Loader2, Trash2, Eye, EyeOff, X,
   Volume2, VolumeX, Play, MessageSquare, Mail, GitBranch, CheckCircle2,
   KeyRound, AlertCircle, Monitor, Smartphone, MapPin, LogOut,
-  Globe, Keyboard, Database, Zap, RefreshCw, Download, Upload,
+  Globe, Keyboard, Database, Zap, Download, Upload,
   Contrast, Wifi, Link2, Twitter, Github, Linkedin, Trash, Lock,
   BarChart2, Clock3, MousePointer2, Activity, ToggleLeft, Sliders,
-  Image, FileText, Archive, HardDrive, AlarmClock, BellOff,
+  HardDrive, AlarmClock, BellOff,
   UserCheck, ShieldCheck, Cpu, Layout, Maximize2, ChevronDown,
   Type, RotateCcw, ZoomIn, ZoomOut, Crop, History, Star,
 } from 'lucide-react';
@@ -586,7 +586,16 @@ const Settings: React.FC = () => {
 
   // ── Storage ──
   const [autoBackup, setAutoBackup] = useState(settings.autoBackup || false);
-  const [cacheSize] = useState('124 MB');
+  // Lo que la app ocupa en este dispositivo, medido por el navegador. Antes
+  // eran números fijos ("124 MB", "24 %", "1.2 GB de archivos").
+  const [almacenamiento, setAlmacenamiento] = useState<{ uso: number; cuota: number } | null>(null);
+  useEffect(() => {
+    navigator.storage?.estimate?.()
+      .then(e => setAlmacenamiento({ uso: e.usage ?? 0, cuota: e.quota ?? 0 }))
+      .catch(() => setAlmacenamiento(null));
+  }, []);
+  const mb = (b: number) => b >= 1024 ** 3 ? `${(b / 1024 ** 3).toFixed(1)} GB` : `${(b / 1024 ** 2).toFixed(1)} MB`;
+  const cacheSize = almacenamiento ? mb(almacenamiento.uso) : '—';
   const [clearingCache, setClearingCache] = useState(false);
   const [clearCacheConfirm, setClearCacheConfirm] = useState(false);
   const [exportingData, setExportingData] = useState(false);
@@ -819,15 +828,16 @@ avatar = url;
     } finally { setPwLoading(false); }
   };
 
+  // Todavía no hay verificación en 2 pasos real: antes el interruptor solo
+  // guardaba un ajuste y decía "2FA activado" sin proteger nada.
   const handleToggle2FA = async (v: boolean) => {
-    setTwoFAEnabled(v);
-    await updateSettings({ twoFAEnabled: v });
-    if (userProfile?.uid) await logUserActivity(userProfile.uid, v ? '2fa_enabled' : '2fa_disabled', v ? '2FA activado' : '2FA desactivado');
-    showMsg('success', v ? '2FA activado' : '2FA desactivado');
+    if (!v) { setTwoFAEnabled(false); await updateSettings({ twoFAEnabled: false }); return; }
+    showMsg('error', 'La verificación en 2 pasos todavía no está disponible');
   };
 
   const handleRevokeSession = async (id: string) => {
-    await revokeSession(id).catch(console.error);
+    try { await revokeSession(id); }
+    catch (e) { console.error(e); showMsg('error', 'No se pudo cerrar esa sesión'); return; }
     setSessions(prev => prev.filter(s => s.id !== id));
     if (userProfile?.uid) await logUserActivity(userProfile.uid, 'session_revoked', 'Sesión cerrada remotamente');
     showMsg('success', 'Sesión cerrada');
@@ -835,7 +845,8 @@ avatar = url;
 
   const handleRevokeAllSessions = async () => {
     if (!userProfile?.uid) return;
-    await revokeAllOtherSessions(userProfile.uid).catch(console.error);
+    try { await revokeAllOtherSessions(userProfile.uid); }
+    catch (e) { console.error(e); showMsg('error', 'No se pudieron cerrar las otras sesiones'); return; }
     setSessions(prev => prev.filter(s => s.current));
     await logUserActivity(userProfile.uid, 'session_revoked', 'Todas las otras sesiones cerradas');
     showMsg('success', 'Otras sesiones cerradas');
@@ -1143,7 +1154,7 @@ avatar = url;
       cookieAnalytics, setCookieAnalytics, twoFAEnabled, loginAlerts, setLoginAlerts, searchVisible, setSearchVisible,
       highContrast, setHighContrast, reduceMotion, setReduceMotion, screenReader, setScreenReader,
       focusIndicator, setFocusIndicator, language, setLanguage, timezone, setTimezone, dateFormat, setDateFormat,
-      autoBackup, setAutoBackup, cacheSize, clearingCache, clearCacheConfirm, exportingData,
+      autoBackup, setAutoBackup, cacheSize, almacenamiento, mb, clearingCache, clearCacheConfirm, exportingData,
       sessions, loadingSessions, activityLogs, loadingActivity, integrationStates,
       saving, avatarHistory, setAvatarHistory, previewUrl, setPreviewUrl,
       focusedField, setFocusedField, liveTime, passwordStrength,
@@ -1198,7 +1209,7 @@ const TabContent: React.FC<{ activeTab: TabKey; props: any }> = ({ activeTab, pr
     cookieAnalytics, setCookieAnalytics, twoFAEnabled, loginAlerts, setLoginAlerts, searchVisible, setSearchVisible,
     highContrast, setHighContrast, reduceMotion, setReduceMotion, screenReader, setScreenReader,
     focusIndicator, setFocusIndicator, language, setLanguage, timezone, setTimezone, dateFormat, setDateFormat,
-    autoBackup, setAutoBackup, cacheSize, clearingCache, clearCacheConfirm, exportingData,
+    cacheSize, almacenamiento, mb, clearingCache, clearCacheConfirm, exportingData,
     sessions, loadingSessions, activityLogs, loadingActivity, integrationStates,
     saving, avatarHistory, setPreviewUrl,
     setFocusedField, liveTime, passwordStrength,
@@ -1659,7 +1670,7 @@ const TabContent: React.FC<{ activeTab: TabKey; props: any }> = ({ activeTab, pr
             </div>
 
             <div style={cardStyle}>
-              <Row label="Verificación en 2 pasos (2FA)" desc="Capa extra de protección" icon={ShieldCheck} color="#34d399" checked={twoFAEnabled} onChange={handleToggle2FA}  bd={bd} />
+              <Row label="Verificación en 2 pasos (2FA)" desc="Próximamente" icon={ShieldCheck} color="#34d399" checked={twoFAEnabled} onChange={handleToggle2FA}  bd={bd} />
               <Row label="Alertas de inicio de sesión" desc="Notificar desde nuevo dispositivo" icon={BellOff} color="#60a5fa" checked={loginAlerts} onChange={v => { setLoginAlerts(v); updateSettings({ loginAlerts: v }); showMsg('success', v ? 'Alertas activadas' : 'Desactivadas'); }} last bd={bd} />
             </div>
 
@@ -1864,9 +1875,7 @@ const TabContent: React.FC<{ activeTab: TabKey; props: any }> = ({ activeTab, pr
             <div style={{ ...cardStyle, padding: 20, textAlign: 'center' }}>
               <Link2 size={20} style={{ margin: '0 auto 8px', color: 'var(--border-main)' }} />
               <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>Más integraciones en camino</div>
-              <button onClick={() => showMsg('success', 'Solicitud enviada')} style={{ fontSize: 12, padding: '7px 16px', borderRadius: 9, border: '1px solid var(--border-main)', background: 'var(--sidebar-card-bg)', color: 'var(--text-muted)', cursor: 'pointer', transition: 'all 0.15s ease' }}>
-                Sugerir integración
-              </button>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', opacity: 0.8 }}>Si necesitas una, pídesela al equipo de Programación.</div>
             </div>
           </>
         )}
@@ -1875,26 +1884,22 @@ const TabContent: React.FC<{ activeTab: TabKey; props: any }> = ({ activeTab, pr
         {activeTab === 'storage' && (
           <>
             <div style={cardStyle}>
-              <div style={sectionTitle}>Uso de almacenamiento</div>
-              <div style={{ height: 5, borderRadius: 5, background: 'var(--border-main)', overflow: 'hidden', marginBottom: 14 }}>
-                <div style={{ height: '100%', width: '24%', background: accentColor, borderRadius: 5, transition: 'width 1s ease', boxShadow: `0 0 8px ${accentColor}66` }} />
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-                {[
-                  { label: 'Archivos', size: '1.2 GB', icon: FileText, color: '#60a5fa' },
-                  { label: 'Imágenes', size: '0.8 GB', icon: Image,    color: '#a78bfa' },
-                  { label: 'Backups',  size: '0.4 GB', icon: Archive,  color: '#34d399' },
-                ].map(({ label, size, icon: Icon, color }) => (
-                  <div key={label} style={{ padding: '12px 10px', borderRadius: 10, background: 'var(--overlay-bg)', border: `1px solid ${bd}` }}>
-                    <Icon size={15} style={{ color, marginBottom: 5 }} />
-                    <div style={{ fontSize: 14, color: 'var(--text-primary)', fontWeight: 400 }}>{size}</div>
-                    <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{label}</div>
+              <div style={sectionTitle}>Almacenamiento en este dispositivo</div>
+              {almacenamiento && almacenamiento.cuota > 0 ? (
+                <>
+                  <div style={{ height: 5, borderRadius: 5, background: 'var(--border-main)', overflow: 'hidden', marginBottom: 10 }}>
+                    <div style={{ height: '100%', width: `${Math.max(1, Math.min(100, (almacenamiento.uso / almacenamiento.cuota) * 100))}%`, background: accentColor, borderRadius: 5, transition: 'width 1s ease' }} />
                   </div>
-                ))}
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                    {mb(almacenamiento.uso)} usados de {mb(almacenamiento.cuota)} disponibles para la app
+                  </div>
+                </>
+              ) : (
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Este dispositivo no informa cuánto espacio usa la app.</div>
+              )}
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8, opacity: 0.8 }}>
+                Los archivos del portal (adjuntos, diseños, reportes) están en la nube y no ocupan espacio aquí.
               </div>
-            </div>
-            <div style={cardStyle}>
-              <Row label="Copia de seguridad automática" desc="Respaldar datos cada 24 horas" icon={RefreshCw} color="#34d399" checked={autoBackup} onChange={v => { setAutoBackup(v); updateSettings({ autoBackup: v }); showMsg('success', v ? 'Backup activado' : 'Backup desactivado'); }} last bd={bd} />
             </div>
             <div style={cardStyle}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -1924,8 +1929,8 @@ const TabContent: React.FC<{ activeTab: TabKey; props: any }> = ({ activeTab, pr
               </div>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0' }}>
                 <div><div style={{ fontSize: 13, color: 'var(--text-primary)' }}>Importar datos</div><div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Restaurar desde un respaldo</div></div>
-                <button onClick={() => showMsg('success', 'Próximamente')} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', borderRadius: 8, fontSize: 12, border: '1px solid var(--border-main)', background: 'var(--sidebar-card-bg)', color: 'var(--text-muted)', cursor: 'pointer' }}>
-                  <Upload size={12} /> Importar
+                <button disabled title="Todavía no disponible" style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', borderRadius: 8, fontSize: 12, border: '1px solid var(--border-main)', background: 'var(--sidebar-card-bg)', color: 'var(--text-muted)', cursor: 'not-allowed', opacity: 0.5 }}>
+                  <Upload size={12} /> Próximamente
                 </button>
               </div>
             </div>
