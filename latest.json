@@ -1,11 +1,11 @@
 {
-    "version":  "2.1.40",
-    "notes":  "Tema claro en todos los paneles, tema Sistema completo, tablas legibles en pantallas angostas y Configuracion sin datos inventados.",
-    "pub_date":  "2026-09-29T22:55:35Z",
+    "version":  "2.1.41",
+    "notes":  "Colores corregidos en tema oscuro y claro: textos, menu, acentos y calendario legibles en todos los paneles.",
+    "pub_date":  "2026-10-01T20:31:43Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRMDZrZG4yMDRUNDdpV2p3bmhHcVZUSVpybGlWeFI3RDE0TUJubGt4dnNWQlh2c3JWaTNBcE5ZT1RwUGFJOGQ5ekNRUFNUQjVPNlM3cCtDamtCQ2l4Kzc2YUExNFY0bEE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNzQwNTM0CWZpbGU6bW9vbiBTdHVkaW9zXzIuMS40MF94NjQtc2V0dXAuZXhlCkUxQ0F1QWlwaEo3ZDNyOG1iSzBKaVhLL01heHcyNjVQVklWTThESVJzMjUwOWp6cTM3L2VPZGxzbjlsRmtNV2tzK2VBWStTYzh1dmY0ejZaZ0FLckF3PT0K",
-                                             "url":  "https://github.com/pandita1589/moon-Studios-Dashboard/releases/download/v2.1.40/moon.Studios_2.1.40_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRMDZrZG4yMDRUNDBCeWsvK1FvQ0lyNTBZbVEzNWk4OGpSc09zWUdjdjhseXloa2xYTFhYckFwd0Q1YjVZSDFNclloRWRqSlMyd3BZL3VvTVg4RGRwTGY3Mmg4cTMvbHdFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwOTA0NzAyCWZpbGU6bW9vbiBTdHVkaW9zXzIuMS40MV94NjQtc2V0dXAuZXhlCncxVnN0Yng1cDlTWmxqWUFURGE4cFVRS2FEcDQvbGpaZjFmazNrQ2MyWnNjeXFDekpVWDdLRCs0RHVwZVBmUjJMbG1IUmpwQTlnYmNKZUVIUldwSEJnPT0K",
+                                             "url":  "https://github.com/pandita1589/moon-Studios-Dashboard/releases/download/v2.1.41/moon.Studios_2.1.41_x64-setup.exe"
                                          }
                   }
 }
