@@ -1,11 +1,11 @@
 {
-    "version":  "2.1.43",
-    "notes":  "App de escritorio: enlaces externos en tu navegador, notificaciones de Windows, horas de silencio, una sola ventana y recuerda su tamano y posicion.",
-    "pub_date":  "2026-10-01T21:04:12Z",
+    "version":  "2.1.44",
+    "notes":  "Revision a fondo de todos los paneles: Panel CEO, Roles, Admin, Contador, Programacion, Proyectos, Diseno, Secretaria, reportes, Hilos, Anuncios, Calendario y Configuracion.",
+    "pub_date":  "2026-10-01T21:37:20Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRMDZrZG4yMDRUNDF3VW9CODBKelVTekFPNVVLTEpGQUlQUGVHQWNRSlpOMTRJTlJuMVA5RXh4Nk9DaExsV3pBeGtDdldxRHRBL2h3MFNCN3dEeHQ5RW9YUjY1NDhuVWcwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwOTA2NjUxCWZpbGU6bW9vbiBTdHVkaW9zXzIuMS40M194NjQtc2V0dXAuZXhlCm92YTI2QVNLV1ZNdEJ2aUsrYlBnVFBUdTgwb0NGOC9tVWhrRm4ybEVYR2RoajhxSjN6dm9LK2FuWllVNFVza1NGNm1Ua0pyQVY3V0IxMUVSQ0Vic0NnPT0K",
-                                             "url":  "https://github.com/pandita1589/moon-Studios-Dashboard/releases/download/v2.1.43/moon.Studios_2.1.43_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRMDZrZG4yMDRUNDhKc1pNTlFqS2c0b05NTVRUa0VkenNwUm9XN29NUnNKWGNDTVpzcEQrQ2dFQ2czSEhEUHIyYU4xUTJDTjQ4b0ZmMnNVTWhWRUVBT2ttY2hEcWYvcGc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwOTA4NjM5CWZpbGU6bW9vbiBTdHVkaW9zXzIuMS40NF94NjQtc2V0dXAuZXhlCjQzbG9hM1phVktaTkRFUXpScXVFckk3d2NodmE4LytzUGVsc3BxQnJkRnpLMURmbDQwTmdvSzcwc3NkUFV0Mnpja3VyaE5PbSt4VGRDV1BoS2tXTUF3PT0K",
+                                             "url":  "https://github.com/pandita1589/moon-Studios-Dashboard/releases/download/v2.1.44/moon.Studios_2.1.44_x64-setup.exe"
                                          }
                   }
 }
