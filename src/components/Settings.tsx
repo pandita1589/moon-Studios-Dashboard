@@ -39,10 +39,8 @@ import { Megaphone as MegaIcon } from 'lucide-react';
 import { previewSound } from '@/lib/notificationSound';
 import type { SoundType } from '@/lib/notificationSound';
 import { getVersion } from '@tauri-apps/api/app';
-import {
-  UPDATE_AVAILABLE_EVENT, UPDATE_START_EVENT,
-  PENDING_UPDATE_KEY, type PendingUpdate,
-} from '@/components/UpdateNotifier';
+import SeccionActualizaciones from '@/components/SeccionActualizaciones';
+import { useActualizador } from '@/lib/actualizador';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface AvatarRecord { url: string; path: string; uploadedAt: string; }
@@ -917,33 +915,10 @@ avatar = url;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Pending update (integración con UpdateNotifier) ──────────────────────
-  // Lazy initializer: lee localStorage en el render inicial sin useEffect extra
-  const [pendingUpdate, setPendingUpdate] = useState<PendingUpdate | null>(() => {
-    try {
-      const stored = localStorage.getItem(PENDING_UPDATE_KEY);
-      return stored ? (JSON.parse(stored) as PendingUpdate) : null;
-    } catch {
-      return null;
-    }
-  });
-  // Solo el event listener vive en el effect (sin setState en el body)
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent<PendingUpdate>).detail;
-      setPendingUpdate(detail);
-    };
-    window.addEventListener(UPDATE_AVAILABLE_EVENT, handler);
-    return () => window.removeEventListener(UPDATE_AVAILABLE_EVENT, handler);
-  }, []);
-
-  const handleUpdateFromSettings = () => {
-    // IMPORTANTE: disparar el evento ANTES de limpiar el estado
-    // para que UpdateNotifier pueda usar updateRef.current
-    window.dispatchEvent(new CustomEvent(UPDATE_START_EVENT));
-    localStorage.removeItem(PENDING_UPDATE_KEY);
-    setPendingUpdate(null);
-  };
+  // Aviso de versión nueva en el encabezado y el menú (estado de lib/actualizador).
+  const actualizacion = useActualizador();
+  const pendingUpdate = (actualizacion.fase === 'disponible' || actualizacion.fase === 'lista') && actualizacion.version
+    ? { version: actualizacion.version } : null;
 
   const daysUntilExpiry = (uploadedAt: string) =>
     Math.max(0, 7 - Math.floor((Date.now() - new Date(uploadedAt).getTime()) / 86_400_000));
@@ -1188,7 +1163,6 @@ avatar = url;
       handleRevokeSession, handleRevokeAllSessions, handleClearCache, handleExportData,
       daysUntilExpiry, showMsg,
       fileInputRef, showHistory, setShowHistory, IS_TAURI, appVersion,
-      pendingUpdate, handleUpdateFromSettings,
     };
   }
 };
@@ -1242,8 +1216,7 @@ const TabContent: React.FC<{ activeTab: TabKey; props: any }> = ({ activeTab, pr
     handleUpdateProfile, handleChangePassword, handleToggle2FA,
     handleRevokeSession, handleRevokeAllSessions, handleClearCache, handleExportData,
     daysUntilExpiry, showMsg,
-    fileInputRef, setShowHistory, IS_TAURI, appVersion,
-    pendingUpdate, handleUpdateFromSettings,
+    fileInputRef, setShowHistory, IS_TAURI,
   } = p;
 
   // Load all fonts once
@@ -2010,57 +1983,8 @@ const TabContent: React.FC<{ activeTab: TabKey; props: any }> = ({ activeTab, pr
                 </div>
               )}
 
-              {/* Versión app (Tauri) */}
-              {IS_TAURI && (
-                <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${bd}` }}>
-                  {/* Fila de versión */}
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <div style={{ width: 32, height: 32, borderRadius: 9, background: `${accentColor}18`, border: `1px solid ${accentColor}25`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <Cpu size={14} style={{ color: accentColor }} />
-                      </div>
-                      <div>
-                        <div style={{ fontSize: 13, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                          Versión de la aplicación
-                          {pendingUpdate && (
-                            <span style={{ fontSize: 9, padding: '2px 7px', borderRadius: 20, background: 'rgba(52,211,153,0.12)', color: '#34d399', border: '1px solid rgba(52,211,153,0.25)', animation: 'pulse 2s infinite' }}>
-                              UPDATE
-                            </span>
-                          )}
-                        </div>
-                        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>moon Studios Dashboard · Windows</div>
-                      </div>
-                    </div>
-                    <div style={{ fontSize: 13, fontWeight: 400, color: accentColor, background: `${accentColor}14`, border: `1px solid ${accentColor}33`, borderRadius: 8, padding: '4px 12px', fontVariantNumeric: 'tabular-nums' }}>
-                      v{appVersion}
-                    </div>
-                  </div>
-
-                  {/* Banner de actualización pendiente */}
-                  {pendingUpdate && (
-                    <div style={{ marginTop: 12, padding: '12px 14px', borderRadius: 12, background: 'rgba(52,211,153,0.06)', border: '1px solid rgba(52,211,153,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, animation: 'fadeInUp 0.25s ease' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                        <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#34d399', flexShrink: 0, boxShadow: '0 0 6px rgba(52,211,153,0.6)', animation: 'pulse 2s infinite' }} />
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ fontSize: 12, color: 'var(--text-primary)' }}>
-                            v{pendingUpdate.version} disponible
-                          </div>
-                          <div style={{ fontSize: 10, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180 }}>
-                            {pendingUpdate.notes.length > 55 ? pendingUpdate.notes.slice(0, 55) + '…' : pendingUpdate.notes}
-                          </div>
-                        </div>
-                      </div>
-                      <button
-                        onClick={handleUpdateFromSettings}
-                        style={{ flexShrink: 0, padding: '7px 14px', borderRadius: 9, background: '#34d399', border: 'none', color: '#000', fontSize: 12, fontWeight: 500, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, transition: 'background 0.15s' }}
-                        onMouseEnter={e => (e.currentTarget.style.background = '#6ee7b7')}
-                        onMouseLeave={e => (e.currentTarget.style.background = '#34d399')}>
-                        <Download size={12} /> Actualizar
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
+              {/* Actualizaciones (solo app de escritorio) */}
+              {IS_TAURI && <SeccionActualizaciones acento={accentColor} borde={bd} />}
             </div>
           </>
         )}
