@@ -159,21 +159,26 @@ html, body {
   transition: width 0.3s cubic-bezier(0.4, 0.0, 0.2, 1) !important;
 }
 
-/* ========== SCROLLBAR ========== */
-::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+/* ========== SCROLLBAR ==========
+   Ocultas en todo el portal (web y app de escritorio): se sigue desplazando
+   con la rueda, el táctil y el teclado, pero ninguna barra se ve.
+   `!important` porque varios paneles declaran su propia ::-webkit-scrollbar
+   (menú, contenido, notificaciones, Calendario, Correo, Inicio, Panel CEO,
+   Discord Bot, Configuración) y la volvían a mostrar. También se oculta la
+   barra dibujada del ScrollArea de shadcn/Radix. */
+* { scrollbar-width: none !important; -ms-overflow-style: none !important; }
+*::-webkit-scrollbar,
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-thumb,
+*::-webkit-scrollbar-corner,
+*::-webkit-scrollbar-button {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  background: transparent !important;
 }
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: hsl(var(--border));
-  border-radius: 8px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--muted-foreground));
-}
+[data-slot="scroll-area-scrollbar"],
+[data-radix-scroll-area-scrollbar] { display: none !important; }
 
 /* ========== SELECCIÓN ========== */
 ::selection {
