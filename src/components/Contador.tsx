@@ -52,6 +52,15 @@ const avisarError = (e: unknown) => {
   toast.error(m?.code === 'permission-denied' ? 'No tienes permiso para esta acción.' : `No se pudo guardar: ${m?.message ?? String(e)}`);
 };
 
+// Para lecturas: avisarError dice "No se pudo guardar", que confunde cuando
+// lo que falló fue cargar datos.
+const avisarErrorCarga = (que: string, e: unknown) => {
+  const m = (e as { code?: string; message?: string } | null);
+  toast.error(m?.code === 'permission-denied'
+    ? `No tienes permiso para ver ${que}.`
+    : `Error al cargar ${que}: ${m?.message ?? String(e)}`);
+};
+
 // Lo usado de un presupuesto = egresos de su categoría en su mes (periodo "yyyy-MM").
 function usadoPresupuesto(p: { categoria: string; periodo: string }, txs: { tipo: string; categoria: string; monto: number; fecha: unknown }[]) {
   return txs.reduce((acc, t) => {
@@ -152,6 +161,13 @@ interface MonedaConfig {
   tipoCambioEUR: number;
   tipoCambioGBP: number;
 }
+
+const MONEDA_DEFECTO: MonedaConfig = {
+  monedaActiva:  'PEN',
+  tipoCambioUSD: 3.75,
+  tipoCambioEUR: 4.05,
+  tipoCambioGBP: 4.70,
+};
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 const CATEGORIAS_INGRESO = [
@@ -614,9 +630,21 @@ const toDate = (fecha: any): Date => {
     return fecha.toDate();
   }
   if (typeof fecha === 'string') {
-    return new Date(fecha);
+    // Un 'yyyy-MM-dd' suelto se lee como medianoche UTC y en Perú cae el día anterior.
+    return /^\d{4}-\d{2}-\d{2}$/.test(fecha) ? fechaLocal(fecha) : new Date(fecha);
   }
+  if (fecha instanceof Date) return fecha;
   return new Date();
+};
+
+// Libro Bancos guarda cada movimiento en su moneda: para sumarlos hay que
+// pasarlos a soles con el tipo de cambio configurado (antes se sumaban
+// euros y dólares como si fueran soles).
+const aSoles = (amount: number, currency: string, cfg: MonedaConfig): number => {
+  const n = Number(amount) || 0;
+  if (currency === 'USD') return n * (cfg.tipoCambioUSD || 0);
+  if (currency === 'EUR') return n * (cfg.tipoCambioEUR || 0);
+  return n;
 };
 
 // ─── Componente principal ─────────────────────────────────────────────────────
@@ -697,8 +725,9 @@ const Contador: React.FC = () => {
     categoria: '',
     fecha: format(new Date(), 'yyyy-MM-dd'),
   });
+  // Sin campo "numero": el N° lo pone generarNumeroFactura() al guardar y el
+  // modal ya lo muestra en solo lectura.
   const [facForm, setFacForm] = useState({
-  numero: '',
   entidad: '',
   tipoEntidad: 'proveedor' as 'proveedor' | 'cliente',
   monto: '',
@@ -713,19 +742,9 @@ const Contador: React.FC = () => {
     montoAsignado: '',
     periodo: format(new Date(), 'yyyy-MM'),
   });
-  const [monedaConfig, setMonedaConfig] = useState<MonedaConfig>({
-    monedaActiva:  'PEN',
-    tipoCambioUSD: 3.75,
-    tipoCambioEUR: 4.05,
-    tipoCambioGBP: 4.70,
-  });
+  const [monedaConfig, setMonedaConfig] = useState<MonedaConfig>(MONEDA_DEFECTO);
   const [showMonedaModal, setShowMonedaModal] = useState(false);
-  const [monedaForm,      setMonedaForm]      = useState<MonedaConfig>({
-    monedaActiva:  'PEN',
-    tipoCambioUSD: 3.75,
-    tipoCambioEUR: 4.05,
-    tipoCambioGBP: 4.70,
-  });
+  const [monedaForm,      setMonedaForm]      = useState<MonedaConfig>(MONEDA_DEFECTO);
   const [savingMoneda, setSavingMoneda] = useState(false);
 
   const [saving, setSaving] = useState(false);
@@ -769,33 +788,37 @@ const Contador: React.FC = () => {
   // llaman los botones que ya existían).
   const fetchAll = useCallback(async () => {
     try { setEmpleados((await getAllUsers()) as UserProfile[]); }
-    catch (e) { console.error('Error cargando empleados:', e); }
+    catch (e) { console.error('Error cargando empleados:', e); avisarErrorCarga('empleados', e); }
   }, []);
 
   useEffect(() => {
-    let pendientes = 7;
-    const listo = () => { pendientes -= 1; if (pendientes <= 0) setLoading(false); };
+    // Se cuenta cada colección una sola vez: con un contador simple, dos
+    // snapshots seguidos de la misma colección quitaban el spinner antes
+    // de que llegaran las demás.
+    const TOTAL = 7;
+    const vistas = new Set<string>();
+    const listo = (que: string) => { vistas.add(que); if (vistas.size >= TOTAL) setLoading(false); };
     const alFallar = (que: string) => (e: unknown) => {
       console.error(`Error escuchando ${que}:`, e);
-      avisarError(e);
-      listo();
+      avisarErrorCarga(que, e);
+      listo(que);
     };
     let primeraConfig = true;
     const subs = [
       onSnapshot(query(collection(db, 'contabilidad_transacciones'), orderBy('fecha', 'desc')), snap => {
-        setTransacciones(snap.docs.map(d => ({ id: d.id, ...d.data() } as Transaccion))); listo();
+        setTransacciones(snap.docs.map(d => ({ id: d.id, ...d.data() } as Transaccion))); listo('transacciones');
       }, alFallar('transacciones')),
       onSnapshot(query(collection(db, 'contabilidad_facturas'), orderBy('fecha', 'desc')), snap => {
-        setFacturas(snap.docs.map(d => ({ id: d.id, ...d.data() } as Factura))); listo();
+        setFacturas(snap.docs.map(d => ({ id: d.id, ...d.data() } as Factura))); listo('facturas');
       }, alFallar('facturas')),
       onSnapshot(query(collection(db, 'contabilidad_presupuestos'), orderBy('periodo', 'desc')), snap => {
-        setPresupuestos(snap.docs.map(d => ({ id: d.id, ...d.data() } as Presupuesto))); listo();
+        setPresupuestos(snap.docs.map(d => ({ id: d.id, ...d.data() } as Presupuesto))); listo('presupuestos');
       }, alFallar('presupuestos')),
       onSnapshot(query(collection(db, 'contabilidad_sueldos'), orderBy('creadoEn', 'desc')), snap => {
-        setSueldos(snap.docs.map(d => ({ id: d.id, ...d.data() } as Sueldo))); listo();
+        setSueldos(snap.docs.map(d => ({ id: d.id, ...d.data() } as Sueldo))); listo('sueldos');
       }, alFallar('sueldos')),
       onSnapshot(query(collection(db, 'contabilidad_asientos'), orderBy('numero', 'desc')), snap => {
-        setAsientos(snap.docs.map(d => ({ id: d.id, ...d.data() } as AsientoContable))); listo();
+        setAsientos(snap.docs.map(d => ({ id: d.id, ...d.data() } as AsientoContable))); listo('asientos');
       }, alFallar('asientos')),
       onSnapshot(query(collection(db, 'libro_diario'), orderBy('date', 'desc')), snap => {
         setLibroEntries(snap.docs.map(d => {
@@ -803,17 +826,21 @@ const Contador: React.FC = () => {
           return {
             ...raw,
             id:        d.id,
-            date:      raw.date?.toDate?.() ?? new Date(raw.date),
-            createdAt: raw.createdAt?.toDate?.() ?? new Date(),
+            // toDate lee 'yyyy-MM-dd' en hora local y no deja una fecha inválida
+            // (format() revienta con Invalid Date).
+            date:      toDate(raw.date),
+            createdAt: toDate(raw.createdAt),
           } as LibroBancoEntry;
         }));
-        listo();
+        listo('libro bancos');
       }, alFallar('libro bancos')),
       onSnapshot(collection(db, 'contabilidad_config'), snap => {
         const cfgDoc    = snap.docs.find(d => d.id === 'empresa');
         const monedaDoc = snap.docs.find(d => d.id === 'moneda');
         if (monedaDoc) {
-          const m = monedaDoc.data() as MonedaConfig;
+          // Con los valores por defecto debajo, un documento a medias no deja
+          // la moneda o un tipo de cambio en undefined.
+          const m: MonedaConfig = { ...MONEDA_DEFECTO, ...(monedaDoc.data() as Partial<MonedaConfig>) };
           setMonedaConfig(m);
           if (primeraConfig) setMonedaForm(m);
         }
@@ -825,10 +852,13 @@ const Contador: React.FC = () => {
           if (primeraConfig) setConfigForm(cfg);
         }
         primeraConfig = false;
-        listo();
+        listo('configuración');
       }, alFallar('configuración')),
     ];
-    getAllUsers().then(e => setEmpleados(e as UserProfile[])).catch(e => console.error('Error cargando empleados:', e));
+    getAllUsers().then(e => setEmpleados(e as UserProfile[])).catch(e => {
+      console.error('Error cargando empleados:', e);
+      avisarErrorCarga('empleados', e);
+    });
     return () => subs.forEach(u => u());
   }, []);
 
@@ -850,13 +880,20 @@ const Contador: React.FC = () => {
     .reduce((a, s) => a + (s.montoBase + s.bonificaciones - s.descuentos), 0);
 
   // ── Datos para gráfica de barras por mes ──
+  // Solo el año en curso: comparando solo el mes, enero de 2025 y enero de
+  // 2026 se sumaban en la misma barra.
+  const anioActual = new Date().getFullYear();
+  const enMes = (fecha: unknown, mesNum: number) => {
+    const d = toDate(fecha);
+    return d.getFullYear() === anioActual && d.getMonth() + 1 === mesNum;
+  };
   const chartData = MESES.map((mes, idx) => {
     const mesNum = idx + 1;
     const ingresos = transacciones
-      .filter(t => t.tipo === 'ingreso' && toDate(t.fecha).getMonth() + 1 === mesNum)
+      .filter(t => t.tipo === 'ingreso' && enMes(t.fecha, mesNum))
       .reduce((a, t) => a + t.monto, 0);
     const egresos = transacciones
-      .filter(t => t.tipo === 'egreso' && toDate(t.fecha).getMonth() + 1 === mesNum)
+      .filter(t => t.tipo === 'egreso' && enMes(t.fecha, mesNum))
       .reduce((a, t) => a + t.monto, 0);
     return { mes, ingresos, egresos, balance: ingresos - egresos };
   });
@@ -872,6 +909,7 @@ const Contador: React.FC = () => {
   // ── Guardar Transacción ──
   const handleSaveTx = async () => {
     if (!txForm.monto || !txForm.descripcion || !txForm.categoria) return;
+    if (!(parseFloat(txForm.monto) > 0)) { toast.error('El monto debe ser mayor que 0.'); return; }
     setSaving(true);
     try {
       await addDoc(collection(db, 'contabilidad_transacciones'), {
@@ -897,8 +935,26 @@ const Contador: React.FC = () => {
   const handleAddLinea = () =>
     setLineasForm(p => [...p, { cuentaCodigo: '', cuentaNombre: '', debe: 0, haber: 0 }]);
 
-  const handleRemoveLinea = (idx: number) =>
+  // Búsqueda, detalle y país de cada línea se guardan por índice: al quitar
+  // una línea, las de abajo suben un puesto y sus textos tienen que subir
+  // con ellas (si no, el detalle de una línea aparecía en otra).
+  const reindexar = <T,>(obj: { [k: string]: T }, quitado: number) => {
+    const out: { [k: string]: T } = {};
+    for (const [k, v] of Object.entries(obj)) {
+      const m = /^(?:([a-z]+)_)?(\d+)$/.exec(k);
+      if (!m) { out[k] = v; continue; }
+      const i = Number(m[2]);
+      if (i === quitado) continue;
+      const ni = i > quitado ? i - 1 : i;
+      out[m[1] ? `${m[1]}_${ni}` : String(ni)] = v;
+    }
+    return out;
+  };
+  const handleRemoveLinea = (idx: number) => {
     setLineasForm(p => p.filter((_, i) => i !== idx));
+    setCuentaSearch(p => reindexar(p, idx));
+    setCuentaPais(p => reindexar(p, idx) as { [key: number]: 'PE' | 'ES' });
+  };
 
   const handleLineaChange = (idx: number, field: keyof Omit<LineaAsiento,'glosa'>, value: string | number) =>
     setLineasForm(p => p.map((l, i) => i === idx ? { ...l, [field]: value } : l));
@@ -914,12 +970,14 @@ const Contador: React.FC = () => {
     setSaving(true);
     try {
       const nextNumero = asientos.reduce((m, a) => Math.max(m, Number(a.numero) || 0), 0) + 1;
+      // El detalle se toma por el índice original de la línea; filtrando antes
+      // de mapear, una línea vacía arriba corría los detalles de las demás.
       const lineasFinal: LineaAsiento[] = lineasForm
-  .filter(l => l.debe > 0 || l.haber > 0)
   .map((l, idx) => ({
     ...l,
     glosa: cuentaSearch[`desc_${idx}`] || asientoForm.glosa,
-  }));
+  }))
+  .filter(l => l.debe > 0 || l.haber > 0);
       await addDoc(collection(db, 'contabilidad_asientos'), {
         numero:          nextNumero,
         fecha:           Timestamp.fromDate(fechaLocal(asientoForm.fecha)),
@@ -933,6 +991,10 @@ const Contador: React.FC = () => {
       });
       setShowAsientoModal(false);
       setAsientoForm({ fecha: format(new Date(), 'yyyy-MM-dd'), glosa: '' });
+      // Cerrar con setShowAsientoModal no pasa por onOpenChange: sin esto, los
+      // detalles por línea del asiento anterior aparecían en el siguiente.
+      setCuentaSearch({});
+      setCuentaPais({});
       setLineasForm([
         { cuentaCodigo: '', cuentaNombre: '', debe: 0, haber: 0 },
         { cuentaCodigo: '', cuentaNombre: '', debe: 0, haber: 0 },
@@ -944,6 +1006,7 @@ const Contador: React.FC = () => {
   // ── Guardar Factura ──
   const handleSaveFac = async () => {
     if (!facForm.entidad || !facForm.monto) return;
+    if (!(parseFloat(facForm.monto) > 0)) { toast.error('El monto debe ser mayor que 0.'); return; }
     setSaving(true);
     try {
       const numeroAuto = generarNumeroFactura();
@@ -959,7 +1022,7 @@ const Contador: React.FC = () => {
         observaciones: facForm.observaciones,  // ← agregar
       });
       setShowFacModal(false);
-      setFacForm({ numero: '', entidad: '', tipoEntidad: 'proveedor', monto: '', estado: 'pendiente', fecha: format(new Date(), 'yyyy-MM-dd'), descripcion: '', observaciones: '' });
+      setFacForm({ entidad: '', tipoEntidad: 'proveedor', monto: '', estado: 'pendiente', fecha: format(new Date(), 'yyyy-MM-dd'), descripcion: '', observaciones: '' });
       fetchAll();
     } catch (e) { console.error(e); avisarError(e); }
     finally { setSaving(false); }
@@ -968,6 +1031,7 @@ const Contador: React.FC = () => {
   // ── Guardar Presupuesto ──
   const handleSavePres = async () => {
     if (!presForm.nombre || !presForm.montoAsignado || !presForm.categoria) return;
+    if (!(parseFloat(presForm.montoAsignado) > 0)) { toast.error('El monto asignado debe ser mayor que 0.'); return; }
     setSaving(true);
     try {
       if (editPresId) {
@@ -1087,7 +1151,10 @@ const Contador: React.FC = () => {
         const h = 26, w = Math.min(h * ratio, 55);
         pdf.addImage(dataUrl, 'PNG', M, 16, w, h);
         logoLoaded = true;
-      } catch (_) {}
+      } catch {
+        // El PDF sale igual, pero sin logo: mejor decirlo que fallar en silencio.
+        toast.warning('No se pudo cargar el logo; el PDF se generó sin él.');
+      }
     }
 
     // Nombre empresa
@@ -1252,10 +1319,11 @@ const Contador: React.FC = () => {
       W - M, 291, { align: 'right' }
     );
 
-    pdf.save(`Factura_${factura.numero.replace('-', '_')}.pdf`);
+    pdf.save(`Factura_${String(factura.numero ?? factura.id).replace('-', '_')}.pdf`);
   } catch (e) {
     console.error('Error generando PDF:', e);
-    alert('Error al generar PDF. Verifica que jspdf esté instalado: npm install jspdf');
+    // Antes era un alert que culpaba siempre a jspdf; el fallo real casi nunca es ese.
+    toast.error(`No se pudo generar el PDF: ${(e as { message?: string } | null)?.message ?? String(e)}`);
   } finally {
     setGeneratingPdf(null);
   }
@@ -1264,11 +1332,16 @@ const Contador: React.FC = () => {
   // ── Guardar Sueldo ──
   const handleSaveSueldo = async () => {
     if (!selectedEmp || !sueldoForm.montoBase) return;
+    const base  = parseFloat(sueldoForm.montoBase);
+    const bonif = parseFloat(sueldoForm.bonificaciones || '0');
+    const desc  = parseFloat(sueldoForm.descuentos || '0');
+    if (!(base > 0) || !Number.isFinite(bonif) || !Number.isFinite(desc) || bonif < 0 || desc < 0) {
+      toast.error('Revisa los montos: el sueldo base debe ser mayor que 0 y no puede haber montos negativos.');
+      return;
+    }
     setSaving(true);
     try {
-      const neto = parseFloat(sueldoForm.montoBase)
-                 + parseFloat(sueldoForm.bonificaciones || '0')
-                 - parseFloat(sueldoForm.descuentos || '0');
+      const neto = base + bonif - desc;
       const payload = {
         empleadoUid:    selectedEmp.uid,
         empleadoNombre: selectedEmp.displayName,
@@ -1280,13 +1353,22 @@ const Contador: React.FC = () => {
         periodo:        sueldoForm.periodo,
         estado:         sueldoForm.estado,
         observaciones:  sueldoForm.observaciones,
-        creadoPor:      userProfile?.uid || '',
-        creadoEn:       Timestamp.now(),
       };
       if (editSueldoId) {
-        await updateDoc(doc(db, 'contabilidad_sueldos', editSueldoId), payload);
+        // Al editar se conservan creadoEn/creadoPor originales (la lista se
+        // ordena por creadoEn: pisarlo movía el registro arriba) y se deja
+        // constancia de quién lo cambió.
+        await updateDoc(doc(db, 'contabilidad_sueldos', editSueldoId), {
+          ...payload,
+          actualizadoPor: userProfile?.uid || '',
+          actualizadoEn:  Timestamp.now(),
+        });
       } else {
-        await addDoc(collection(db, 'contabilidad_sueldos'), payload);
+        await addDoc(collection(db, 'contabilidad_sueldos'), {
+          ...payload,
+          creadoPor: userProfile?.uid || '',
+          creadoEn:  Timestamp.now(),
+        });
       }
       setShowSueldoModal(false);
       setEditSueldoId(null);
@@ -1312,7 +1394,7 @@ const Contador: React.FC = () => {
     setSaving(true);
     try {
       await addDoc(collection(db, 'libro_diario'), {
-        date:        Timestamp.fromDate(new Date(libroForm.date + 'T12:00:00')),
+        date:        Timestamp.fromDate(fechaLocal(libroForm.date)),
         tipo:        libroForm.tipo,
         bankId:      libroForm.bankId,
         bankName:    banco?.name ?? libroForm.bankId,
@@ -1390,19 +1472,21 @@ const Contador: React.FC = () => {
       e.bankName?.toLowerCase().includes(libroSearch.toLowerCase()) ||
       e.category?.toLowerCase().includes(libroSearch.toLowerCase()) ||
       e.reference?.toLowerCase().includes(libroSearch.toLowerCase());
-    const entryDate = e.date instanceof Date ? e.date : new Date(e.date);
+    const entryDate = toDate(e.date);
     const matchFrom = !libroDateFrom || entryDate >= new Date(libroDateFrom + 'T00:00:00');
     const matchTo   = !libroDateTo   || entryDate <= new Date(libroDateTo   + 'T23:59:59');
     return matchTipo && matchBanco && matchSearch && matchFrom && matchTo;
   });
-  const libroIngresos  = libroFiltered.filter(e => e.tipo === 'ingreso').reduce((s, e) => s + e.amount, 0);
-  const libroEgresos   = libroFiltered.filter(e => e.tipo === 'egreso' ).reduce((s, e) => s + e.amount, 0);
+  // Totales en soles: cada movimiento se convierte desde su moneda (ver aSoles).
+  const enSoles = (e: LibroBancoEntry) => aSoles(e.amount, e.currency, monedaConfig);
+  const libroIngresos  = libroFiltered.filter(e => e.tipo === 'ingreso').reduce((s, e) => s + enSoles(e), 0);
+  const libroEgresos   = libroFiltered.filter(e => e.tipo === 'egreso' ).reduce((s, e) => s + enSoles(e), 0);
   const libroBalance   = libroIngresos - libroEgresos;
   const libroBancosUsados = [...new Set(libroEntries.map(e => e.bankId))];
   const libroBancoSummary = libroBancosUsados.map(bankId => {
     const ents = libroFiltered.filter(e => e.bankId === bankId);
-    const ing  = ents.filter(e => e.tipo === 'ingreso').reduce((s, e) => s + e.amount, 0);
-    const egr  = ents.filter(e => e.tipo === 'egreso' ).reduce((s, e) => s + e.amount, 0);
+    const ing  = ents.filter(e => e.tipo === 'ingreso').reduce((s, e) => s + enSoles(e), 0);
+    const egr  = ents.filter(e => e.tipo === 'egreso' ).reduce((s, e) => s + enSoles(e), 0);
     const b    = getBancoById(bankId);
     return { bankId, bankName: b?.name ?? bankId, country: b?.country ?? 'custom', ing, egr, balance: ing - egr };
   }).filter(b => b.ing > 0 || b.egr > 0);
@@ -1416,7 +1500,7 @@ const Contador: React.FC = () => {
   return (
     <div className="space-y-6">
      {/* DESPUÉS — todo en un solo header */}
-<div className="flex items-center justify-between">
+<div className="flex flex-wrap items-center justify-between gap-3">
   <h2 className="text-2xl font-extralight text-white flex items-center gap-3">
     <DollarSign className="w-6 h-6 text-emerald-400" strokeWidth={1.5} />
     Contabilidad
@@ -1504,7 +1588,7 @@ const Contador: React.FC = () => {
           <Card className="bg-zinc-950 border-zinc-800">
             <CardHeader className="pb-2">
               <CardTitle className="text-zinc-400 font-extralight text-sm uppercase tracking-wider">
-                Ingresos vs Egresos por mes
+                Ingresos vs Egresos por mes · {anioActual}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -1531,7 +1615,7 @@ const Contador: React.FC = () => {
             <Card className="bg-zinc-950 border-zinc-800">
               <CardHeader className="pb-2">
                 <CardTitle className="text-zinc-400 font-extralight text-sm uppercase tracking-wider">
-                  Evolución del balance
+                  Evolución del balance · {anioActual}
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -1587,7 +1671,7 @@ const Contador: React.FC = () => {
 
         {/* ══ EMPLEADOS ════════════════════════════════════════════════════════ */}
         <TabsContent value="empleados" className="mt-6 space-y-5">
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <Card className="bg-zinc-950 border-zinc-800 border-blue-900/30">
               <CardContent className="p-4">
                 <p className="text-zinc-500 text-xs font-extralight uppercase tracking-wider">Total empleados</p>
@@ -1627,7 +1711,7 @@ const Contador: React.FC = () => {
                 const pendientesEmp = sueldosEmp.filter(s => s.estado === 'pendiente').length;
                 return (
                   <div key={emp.uid}
-                    className="flex items-center justify-between px-4 py-3 border-b border-zinc-900 last:border-0 hover:bg-zinc-900/30 transition-colors">
+                    className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-zinc-900 last:border-0 hover:bg-zinc-900/30 transition-colors">
                     <div className="flex items-center gap-3">
                       <div className="w-9 h-9 rounded-full bg-zinc-800 border border-zinc-700 overflow-hidden flex items-center justify-center flex-shrink-0">
                         {emp.avatar
@@ -1719,7 +1803,7 @@ const Contador: React.FC = () => {
             )}
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {[
               { label: 'Mostradas', value: txFiltradas.length, color: 'text-white' },
               { label: 'Ingresos filtrados', value: formatMoney(txFiltradas.filter(t=>t.tipo==='ingreso').reduce((a,t)=>a+t.monto,0)), color: 'text-emerald-400' },
@@ -1787,7 +1871,7 @@ const Contador: React.FC = () => {
         {/* ══ FACTURAS ═════════════════════════════════════════════════════════ */}
         <TabsContent value="facturas" className="mt-6 space-y-5">
           {companyConfig.empresaNombre ? (
-            <div className="flex items-center justify-between p-3 bg-zinc-900/60 border border-zinc-800 rounded-lg">
+            <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-zinc-900/60 border border-zinc-800 rounded-lg">
               <div className="flex items-center gap-3">
                 {companyConfig.logoUrl && (
                   <img src={companyConfig.logoUrl} alt="logo" className="h-8 w-auto object-contain rounded" />
@@ -1818,7 +1902,7 @@ const Contador: React.FC = () => {
           )}
 
           <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
                 <Input value={facSearch} onChange={e => setFacSearch(e.target.value)}
@@ -1865,13 +1949,13 @@ const Contador: React.FC = () => {
                 const cfg = ESTADO_FACTURA_CONFIG[f.estado];
                 return (
                   <div key={f.id}
-                    className="flex items-center justify-between px-4 py-3 border-b border-zinc-900 last:border-0 hover:bg-zinc-900/30 transition-colors">
+                    className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-zinc-900 last:border-0 hover:bg-zinc-900/30 transition-colors">
                     <div className="flex items-center gap-3">
                       <div className="w-9 h-9 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center flex-shrink-0">
                         <FileText className="w-4 h-4 text-zinc-500" strokeWidth={1.5} />
                       </div>
                       <div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <p className="text-white font-extralight text-sm">{f.entidad}</p>
                           <span className="text-zinc-600 text-xs font-extralight">#{f.numero}</span>
                           <Badge className="text-[10px] px-1.5 py-0 font-extralight" variant="outline">
@@ -1938,7 +2022,7 @@ const Contador: React.FC = () => {
 
         {/* ══ PRESUPUESTOS ═════════════════════════════════════════════════════ */}
         <TabsContent value="presupuestos" className="mt-6 space-y-5">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-zinc-500 font-extralight text-sm">
               {presupuestos.length} presupuesto{presupuestos.length !== 1 ? 's' : ''} activos
             </p>
@@ -2250,7 +2334,7 @@ const Contador: React.FC = () => {
         <TabsContent value="librobancos" className="mt-6 space-y-5">
 
           {/* Totales */}
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Card className="bg-zinc-950 border-emerald-900/40">
               <CardContent className="p-4">
                 <div className="flex items-center gap-2 mb-1">
@@ -2282,6 +2366,12 @@ const Contador: React.FC = () => {
               </CardContent>
             </Card>
           </div>
+
+          {libroFiltered.some(e => e.currency && e.currency !== 'PEN') && (
+            <p className="text-zinc-600 text-xs font-extralight -mt-2">
+              Totales en soles: los movimientos en USD y EUR se convierten con el tipo de cambio configurado.
+            </p>
+          )}
 
           {/* Resumen por banco */}
           {libroBancoSummary.length > 0 && (
@@ -2398,7 +2488,7 @@ const Contador: React.FC = () => {
                   </div>
                   <div className="divide-y divide-zinc-900/50">
                     {libroFiltered.map(entry => {
-                      const entryDate = entry.date instanceof Date ? entry.date : new Date(entry.date);
+                      const entryDate = toDate(entry.date);
                       const banco     = getBancoById(entry.bankId);
                       const isIng     = entry.tipo === 'ingreso';
                       const isDel     = libroDeletingId === entry.id;
@@ -2899,7 +2989,7 @@ const Contador: React.FC = () => {
                 </div>
               </DialogHeader>
 
-              <div className="grid grid-cols-3 gap-3 py-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 py-2">
                 {[
                   { label: 'Registros',  value: sueldosDelEmp.length },
                   { label: 'Pagados',    value: sueldosDelEmp.filter(s => s.estado === 'pagado').length },
@@ -2932,7 +3022,7 @@ const Contador: React.FC = () => {
                   const cfg  = ESTADO_SUELDO_CONFIG[s.estado];
                   return (
                     <div key={s.id} className="p-3 bg-zinc-900 border border-zinc-800 rounded-lg">
-                      <div className="flex items-center justify-between mb-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                         <div className="flex items-center gap-2">
                           <span className="text-white font-extralight text-sm">{s.periodo}</span>
                           <Badge className={`${cfg.bg} ${cfg.color} ${cfg.border} border font-extralight text-[10px] px-1.5 py-0`}>{cfg.label}</Badge>
@@ -2948,6 +3038,24 @@ const Contador: React.FC = () => {
                                   <SelectItem value="pagado"    className="font-extralight text-green-400 text-xs">Pagado</SelectItem>
                                 </SelectContent>
                               </Select>
+                              {/* El guardado ya sabía editar, pero nada abría el modal en modo edición. */}
+                              <Button variant="ghost" size="sm"
+                                onClick={() => {
+                                  setEditSueldoId(s.id);
+                                  setSueldoForm({
+                                    montoBase:      String(s.montoBase ?? ''),
+                                    bonificaciones: String(s.bonificaciones ?? 0),
+                                    descuentos:     String(s.descuentos ?? 0),
+                                    periodo:        s.periodo,
+                                    estado:         s.estado,
+                                    observaciones:  s.observaciones ?? '',
+                                  });
+                                  setShowSueldoModal(true);
+                                }}
+                                title="Editar sueldo"
+                                className="text-zinc-600 hover:text-white hover:bg-zinc-800 h-6 w-6 p-0">
+                                <Edit2 className="w-3 h-3" />
+                              </Button>
                               <Button variant="ghost" size="sm"
                                 onClick={() => handleDelete('contabilidad_sueldos', s.id)}
                                 className="text-zinc-600 hover:text-red-400 hover:bg-red-950/30 h-6 w-6 p-0">
@@ -2957,7 +3065,7 @@ const Contador: React.FC = () => {
                           )}
                         </div>
                       </div>
-                      <div className="grid grid-cols-3 gap-2 text-xs font-extralight">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs font-extralight">
                         <div><span className="text-zinc-600">Base:</span><span className="text-zinc-300 ml-1">{formatMoney(s.montoBase)}</span></div>
                         <div><span className="text-zinc-600">Bonif.:</span><span className="text-emerald-400 ml-1">+{formatMoney(s.bonificaciones)}</span></div>
                         <div><span className="text-zinc-600">Desc.:</span><span className="text-red-400 ml-1">-{formatMoney(s.descuentos)}</span></div>
@@ -2979,11 +3087,11 @@ const Contador: React.FC = () => {
       </Dialog>
 
       {/* ══ MODAL: Registrar sueldo ══════════════════════════════════════════════ */}
-      <Dialog open={showSueldoModal} onOpenChange={setShowSueldoModal}>
+      <Dialog open={showSueldoModal} onOpenChange={v => { setShowSueldoModal(v); if (!v) setEditSueldoId(null); }}>
         <DialogContent className="bg-zinc-950 border-zinc-800 text-white max-w-md">
           <DialogHeader>
             <DialogTitle className="font-extralight text-lg flex items-center gap-2">
-              <CreditCard className="w-5 h-5" /> Registrar Sueldo
+              <CreditCard className="w-5 h-5" /> {editSueldoId ? 'Editar Sueldo' : 'Registrar Sueldo'}
             </DialogTitle>
             <DialogDescription className="text-zinc-500 font-extralight text-sm">
               {selectedEmp?.displayName} · {selectedEmp?.role}
@@ -3055,12 +3163,12 @@ const Contador: React.FC = () => {
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowSueldoModal(false)}
+            <Button variant="outline" onClick={() => { setShowSueldoModal(false); setEditSueldoId(null); }}
               className="border-zinc-800 text-white hover:bg-zinc-900 font-extralight">Cancelar</Button>
             <Button onClick={handleSaveSueldo} disabled={saving || !sueldoForm.montoBase}
               className="bg-white text-black hover:bg-zinc-200 font-extralight">
               {saving ? <RefreshCw className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle className="w-4 h-4 mr-2" />}
-              Guardar
+              {editSueldoId ? 'Actualizar' : 'Guardar'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -3226,14 +3334,6 @@ const Contador: React.FC = () => {
               {lineasForm.map((linea, idx) => {
                 const tipo      = PLAN_CONTABLE.find(p => p.codigo === linea.cuentaCodigo)?.tipo;
                 const busqueda  = cuentaSearch[idx] ?? '';
-                  {/* Campo descripción libre por línea */}
-<Input
-  value={cuentaSearch[`desc_${idx}`] ?? ''}
-  onChange={e => setCuentaSearch(p => ({ ...p, [`desc_${idx}`]: e.target.value }))}
-  placeholder="Descripción (opcional)"
-  className="bg-zinc-900 border-zinc-800 text-zinc-400 font-extralight text-xs h-7 mt-1"
-/>
-
                 return (
                   <div key={idx} className="grid grid-cols-12 gap-2 items-start">
   {/* Cuenta PCGE */}

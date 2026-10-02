@@ -20,6 +20,8 @@ export interface UnifiedNotification {
   important?: boolean;
   linkTo?:   string;
   rawId?:    string;
+  /** Qué escucha la trajo, si no es la de su categoría (p. ej. 'mention'). */
+  fuente?:   string;
 }
 
 interface UseNotificationsOptions {
@@ -130,9 +132,9 @@ export function useNotifications({
   }, [uid]);
 
   // ── Merge helper ──────────────────────────────────────────────────────────
-  const merge = useCallback((incoming: UnifiedNotification[], category: NotifCategory) => {
+  const merge = useCallback((incoming: UnifiedNotification[], category: NotifCategory | 'mention') => {
     setNotifications(prev => {
-      const rest     = prev.filter(n => n.category !== category);
+      const rest     = prev.filter(n => (n.fuente ?? n.category) !== category);
       const combined = [...rest, ...incoming];
       combined.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
       return combined.slice(0, 50);
@@ -281,6 +283,36 @@ export function useNotifications({
       merge(items, 'thread');
     }, err => console.error('[notif] hilos:', err));
     return unsub;
+  }, [uid, enabledCategories.thread, merge]);
+
+  // ── Listener: Menciones en Hilos ──────────────────────────────────────────
+  // Hilos.tsx escribe una notificación por respuesta con los mencionados en
+  // `toUids`. Nadie leía la colección `notifications`: las menciones nunca
+  // llegaban. Solo array-contains (sin orderBy) para no necesitar índice.
+  useEffect(() => {
+    if (!uid || !enabledCategories.thread) return;
+    const q = query(collection(db, 'notifications'), where('toUids', 'array-contains', uid));
+    const unsub = onSnapshot(q, snap => {
+      const items: UnifiedNotification[] = snap.docs
+        .map(doc => {
+          const d = doc.data();
+          return {
+            id:        `mencion_${doc.id}`,
+            rawId:     doc.id,
+            category:  'thread' as NotifCategory,
+            fuente:    'mention',
+            title:     `${d.authorName || 'Alguien'} te mencionó`,
+            preview:   d.hiloTitle ? `En "${d.hiloTitle}"` : 'En un hilo',
+            createdAt: d.createdAt?.toDate ? d.createdAt.toDate() : new Date(0),
+            linkTo:    '/dashboard/hilos',
+          };
+        })
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+        .slice(0, 20);
+      merge(items, 'mention');
+    }, err => console.error('[notif] menciones:', err));
+    // Al desactivar la categoría o cerrar sesión se quitan de la campana.
+    return () => { unsub(); merge([], 'mention'); };
   }, [uid, enabledCategories.thread, merge]);
 
   // ── Listener: Mensajería ──────────────────────────────────────────────────

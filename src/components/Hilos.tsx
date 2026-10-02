@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { db } from '@/lib/firebase';
+import { db, subscribeToUsers } from '@/lib/firebase';
 import { supabase } from '@/lib/supabaseclient';
 import {
   collection, addDoc, updateDoc, doc,
   onSnapshot, query, orderBy, where, Timestamp,
   increment, getDoc, writeBatch, limit,
-  getDocs, deleteField, setDoc,
-  arrayUnion,
+  getDocs, deleteField, setDoc, deleteDoc,
+  arrayUnion, arrayRemove,
 } from 'firebase/firestore';
 import { urlPublica, abrirExterno } from '@/lib/escritorio';
 import { claveMiRespuesta } from '@/hooks/useNotifications';
@@ -55,8 +55,10 @@ interface Hilo {
 }
 interface UserPresence {
   uid: string; displayName: string; avatar?: string;
-  lastSeen: any; isOnline: boolean;
+  lastSeen: Timestamp | null; isOnline: boolean;
 }
+/** Lo mínimo de cada usuario para el autocompletado de @menciones. */
+interface UsuarioMencion { uid: string; displayName: string; avatar?: string; }
 
 /* ═══════════════════════════════
    CONSTANTES
@@ -76,7 +78,13 @@ const CATEGORIES = [
 ];
 
 const REACTIONS = ['👍','❤️','😂','😮','🎉','👏','🔥','💡','❓','✅'];
-const ADMIN_ROLES = ['CEO','Administración','Moderador'];
+
+// Presencia: latido mientras el hilo está abierto y ventana para darlo por
+// conectado (un latido perdido no lo saca de la lista).
+const PRESENCE_HEARTBEAT_MS = 30_000;
+const PRESENCE_ONLINE_MS    = 75_000;
+const PRESENCE_TICK_MS      = 15_000;
+const MAX_MENTION_SUGGESTIONS = 6;
 
 /* ═══════════════════════════════
    HELPERS
@@ -99,6 +107,16 @@ const formatFull = (ts: any) => {
     return format(d, "d 'de' MMM 'a las' HH:mm", { locale: es }); }
   catch { return ''; }
 };
+// Texto legible para un error de Firestore. El de índice faltante trae en su
+// mensaje el enlace para crearlo, así que se muestra completo.
+const mensajeErrorFirestore = (e: unknown): string => {
+  const code = (e as { code?: string })?.code;
+  const msg = (e as { message?: string })?.message || String(e);
+  if (code === 'failed-precondition') return `Falta un índice de Firestore para esta consulta. ${msg}`;
+  if (code === 'permission-denied') return 'No tienes permiso para ver esto.';
+  if (code === 'unavailable') return 'Sin conexión con el servidor. Revisa tu internet.';
+  return msg;
+};
 const getCategoryInfo = (id: string) => CATEGORIES.find(c => c.id === id) ?? CATEGORIES[0];
 const generateId = () => Math.random().toString(36).substr(2, 9);
 const getFileIcon = (type: string) => {
@@ -106,16 +124,60 @@ const getFileIcon = (type: string) => {
   if (type === 'application/pdf') return FileText;
   return File;
 };
-const getGoogleViewerUrl = (url: string) =>
-  `https://docs.google.com/viewer?url=${encodeURIComponent(url)}&embedded=true`;
+// Vista previa directa del archivo. Antes los documentos pasaban por el visor
+// de Google Docs, que recibía la URL pública del adjunto.
+type TipoVista = 'imagen' | 'pdf' | 'texto' | 'ninguna';
+const tipoVista = (att: Attachment): TipoVista => {
+  if (att.type.startsWith('image/')) return 'imagen';
+  if (att.type === 'application/pdf' || /\.pdf$/i.test(att.name)) return 'pdf';
+  if (att.type === 'text/plain' || /\.txt$/i.test(att.name)) return 'texto';
+  return 'ninguna';
+};
+
+// Minúsculas y sin tildes: "@jose" encuentra a "José".
+const normalizar = (s: string) =>
+  s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+// "@" + lo escrito hasta el cursor (letras con tilde, números, _ . -).
+const MENCION_EN_CURSOR = /(^|\s)@([\p{L}\p{N}_.-]*)$/u;
+
+/**
+ * uids mencionados en el texto: busca "@Nombre completo" de cada usuario.
+ * Los nombres largos van primero y se tachan al encontrarse, para que
+ * "@Ana María" no cuente también como "@Ana".
+ */
+const extraerMenciones = (texto: string, usuarios: UsuarioMencion[]): string[] => {
+  let resto = normalizar(texto);
+  const encontrados: string[] = [];
+  const porLargo = [...usuarios]
+    .filter(u => u.displayName?.trim())
+    .sort((a, b) => b.displayName.length - a.displayName.length);
+  for (const u of porLargo) {
+    const nombre = '@' + normalizar(u.displayName.trim());
+    let i = resto.indexOf(nombre);
+    let hallado = false;
+    while (i !== -1) {
+      const sig = resto.charAt(i + nombre.length);
+      // Que el nombre termine ahí (no "@Ana" dentro de "@Anabel").
+      if (!sig || !/[\p{L}\p{N}_]/u.test(sig)) {
+        hallado = true;
+        resto = resto.slice(0, i) + ' '.repeat(nombre.length) + resto.slice(i + nombre.length);
+      }
+      i = resto.indexOf(nombre, i + 1);
+    }
+    if (hallado) encontrados.push(u.uid);
+  }
+  return encontrados;
+};
 
 /* ═══════════════════════════════
    COMPONENTE PRINCIPAL
 ═══════════════════════════════ */
 const HilosComponent: React.FC = () => {
-  const { currentUser, userProfile } = useAuth();
+  // isAdmin del contexto = CEO o Administración (el rol 'Moderador' que había
+  // en la lista local no existe).
+  const { currentUser, userProfile, isAdmin } = useAuth();
   const uid = currentUser?.uid || '';
-  const isAdmin = ADMIN_ROLES.includes(userProfile?.role || '');
 
   /* ─── State principal ─── */
   const [hilos, setHilos] = useState<Hilo[]>([]);
@@ -163,10 +225,20 @@ const HilosComponent: React.FC = () => {
   const [linkCopied, setLinkCopied] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [hasMoreReplies, setHasMoreReplies] = useState(true);
-  const [onlineUsers, setOnlineUsers] = useState<UserPresence[]>([]);
+  const [presencia, setPresencia] = useState<{ hiloId?: string; docs: UserPresence[] }>({ docs: [] });
+  const [ahoraPresencia, setAhoraPresencia] = useState(() => Date.now());
+  const [usuarios, setUsuarios] = useState<UsuarioMencion[]>([]);
   const [showMentions, setShowMentions] = useState(false);
-  const [mentionQuery] = useState('');
+  const [mentionQuery, setMentionQuery] = useState('');
+  const [mentionIndex, setMentionIndex] = useState(0);
+  // Dónde empieza el "@" que se está completando y dónde está el cursor.
+  const [mentionStart, setMentionStart] = useState(0);
   const [cursorPosition, setCursorPosition] = useState(0);
+
+  /* ─── Errores de carga (antes solo iban a la consola) ─── */
+  const [errorHilos, setErrorHilos] = useState<string | null>(null);
+  const [errorArchivados, setErrorArchivados] = useState<string | null>(null);
+  const [errorReplies, setErrorReplies] = useState<{ hiloId: string; msg: string } | null>(null);
 
   /* ─── Refs ─── */
   const fileNewRef = useRef<HTMLInputElement>(null);
@@ -195,10 +267,25 @@ const HilosComponent: React.FC = () => {
 
     const unsub = onSnapshot(q, snap => {
       setHilos(snap.docs.map(d => ({ id: d.id, ...d.data() } as Hilo)));
+      setErrorHilos(null);
       setLoading(false);
-    }, error => { console.error('Error hilos:', error); setLoading(false); });
+    }, error => {
+      // Antes el fallo (p. ej. índice compuesto sin crear) dejaba la lista
+      // vacía como si no hubiera hilos.
+      console.error('Error hilos:', error);
+      setErrorHilos(mensajeErrorFirestore(error));
+      setLoading(false);
+    });
     return () => unsub();
   }, [sortBy]);
+
+  /* ─── Usuarios para el autocompletado de menciones ─── */
+  useEffect(() => subscribeToUsers(
+    lista => setUsuarios(lista
+      .map(u => ({ uid: String(u.uid), displayName: String(u.displayName ?? ''), avatar: u.avatar ? String(u.avatar) : undefined }))
+      .filter(u => u.displayName.trim())),
+    e => console.error('Error usuarios (menciones):', e),
+  ), []);
 
   /* ─── FIX: Sync selectedHilo desde hilos activos O archivados ─── */
   useEffect(() => {
@@ -234,9 +321,11 @@ const HilosComponent: React.FC = () => {
 
     const unsub = onSnapshot(q, snap => {
       setArchivedHilos(snap.docs.map(d => ({ id: d.id, ...d.data() } as Hilo)));
+      setErrorArchivados(null);
       setLoadingArchived(false);
     }, error => {
       console.error('Error archived:', error);
+      setErrorArchivados(mensajeErrorFirestore(error));
       setLoadingArchived(false);
     });
     return () => unsub();
@@ -266,12 +355,15 @@ const HilosComponent: React.FC = () => {
       orderBy('createdAt', 'asc'),
       limit(tope)
     );
+    const hiloId = selectedHilo.id;
     return onSnapshot(q, snap => {
       setReplies(snap.docs.map(d => ({ id: d.id, ...d.data() } as Reply)));
       setHasMoreReplies(snap.docs.length >= tope);
+      setErrorReplies(null);
       setLoadingReplies(false); setLoadingMore(false);
     }, error => {
       console.error('Error loading replies:', error);
+      setErrorReplies({ hiloId, msg: mensajeErrorFirestore(error) });
       setLoadingReplies(false); setLoadingMore(false);
     });
   }, [selectedHilo?.id, paginasReplies]);
@@ -289,22 +381,62 @@ const HilosComponent: React.FC = () => {
   /* ═══════════════════════════════
      PRESENCIA
   ═══════════════════════════════ */
+  // Antes lastSeen se escribía una sola vez, el corte de "5 min" quedaba fijo
+  // en la hora de suscripción y nadie se borraba al salir: la lista crecía con
+  // gente que ya no estaba. Ahora: latido cada 30 s mientras el hilo está
+  // abierto, "conectado" se recalcula contra la hora actual y al salir se
+  // borra el documento propio (las reglas permiten escribir solo el tuyo).
+  const hiloAbiertoId = selectedHilo?.id;
+  const miNombre = userProfile?.displayName || '';
+  const miAvatar = userProfile?.avatar || '';
+
   useEffect(() => {
-    if (!selectedHilo) return;
-    const presenceRef = collection(db, 'hilos', selectedHilo.id, 'presence');
-    const q = query(presenceRef, where('lastSeen', '>', Timestamp.fromDate(new Date(Date.now() - 5 * 60 * 1000))));
-    const unsub = onSnapshot(q, snap => {
-      setOnlineUsers(snap.docs.map(d => d.data() as UserPresence));
+    if (!hiloAbiertoId) return;
+    const presenceRef = collection(db, 'hilos', hiloAbiertoId, 'presence');
+    return onSnapshot(presenceRef, snap => {
+      setPresencia({ hiloId: hiloAbiertoId, docs: snap.docs.map(d => ({ ...(d.data() as UserPresence), uid: d.id })) });
+    }, error => console.error('Error presencia:', error));
+  }, [hiloAbiertoId]);
+
+  useEffect(() => {
+    if (!hiloAbiertoId || !uid) return;
+    const miRef = doc(db, 'hilos', hiloAbiertoId, 'presence', uid);
+    const latido = () => setDoc(miRef, {
+      uid, displayName: miNombre, avatar: miAvatar,
+      lastSeen: Timestamp.now(), isOnline: true,
+    }, { merge: true }).catch(console.error);
+    void latido();
+    const t = setInterval(latido, PRESENCE_HEARTBEAT_MS);
+    // Al volver a la pestaña se avisa enseguida (el intervalo se ralentiza en segundo plano).
+    const alVolver = () => { if (document.visibilityState === 'visible') void latido(); };
+    document.addEventListener('visibilitychange', alVolver);
+    const salir = () => { deleteDoc(miRef).catch(() => {}); };
+    window.addEventListener('pagehide', salir);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', alVolver);
+      window.removeEventListener('pagehide', salir);
+      salir();
+    };
+  }, [hiloAbiertoId, uid, miNombre, miAvatar]);
+
+  // Reloj para que quien deja de latir salga de la lista sin recargar.
+  useEffect(() => {
+    if (!hiloAbiertoId) return;
+    const tick = () => setAhoraPresencia(Date.now());
+    // Primer tick enseguida: la hora guardada puede ser de hace mucho.
+    const t0 = setTimeout(tick, 0);
+    const t = setInterval(tick, PRESENCE_TICK_MS);
+    return () => { clearTimeout(t0); clearInterval(t); };
+  }, [hiloAbiertoId]);
+
+  const onlineUsers = useMemo(() => {
+    if (!hiloAbiertoId || presencia.hiloId !== hiloAbiertoId) return [];
+    return presencia.docs.filter(p => {
+      const visto = p.lastSeen?.toMillis?.() ?? 0;
+      return p.isOnline !== false && ahoraPresencia - visto < PRESENCE_ONLINE_MS;
     });
-    if (uid) {
-      const userPresenceRef = doc(db, 'hilos', selectedHilo.id, 'presence', uid);
-      setDoc(userPresenceRef, {
-        uid, displayName: userProfile?.displayName || '',
-        avatar: userProfile?.avatar || '', lastSeen: Timestamp.now(), isOnline: true
-      }, { merge: true }).catch(console.error);
-    }
-    return () => unsub();
-  }, [selectedHilo?.id, uid]);
+  }, [presencia, hiloAbiertoId, ahoraPresencia]);
 
   /* ═══════════════════════════════
      COMPRESIÓN / THUMBNAIL
@@ -335,7 +467,10 @@ const HilosComponent: React.FC = () => {
     });
   }, []);
 
-  const generateThumbnail = useCallback(async (file: File): Promise<string | undefined> => {
+  // La miniatura se sube al bucket como archivo aparte. Antes se guardaba como
+  // data URL base64 dentro del documento de Firestore, inflándolo (límite 1 MB
+  // por documento y cada lectura del hilo la descargaba entera).
+  const generateThumbnail = useCallback(async (file: File): Promise<Blob | undefined> => {
     if (!file.type.startsWith('image/')) return undefined;
     return new Promise((resolve) => {
       const img = new window.Image();
@@ -348,7 +483,7 @@ const HilosComponent: React.FC = () => {
         const x = (img.width - size) / 2, y = (img.height - size) / 2;
         ctx?.drawImage(img, x, y, size, size, 0, 0, 300, 300);
         URL.revokeObjectURL(objectUrl);
-        resolve(canvas.toDataURL('image/jpeg', 0.6));
+        canvas.toBlob(blob => resolve(blob ?? undefined), 'image/jpeg', 0.6);
       };
       img.onerror = () => { URL.revokeObjectURL(objectUrl); resolve(undefined); };
       img.src = objectUrl;
@@ -384,9 +519,16 @@ const HilosComponent: React.FC = () => {
         if (error) { alert(`Error al subir "${file.name}": ${error.message}`); continue; }
         if (data) {
           const { data: { publicUrl } } = supabase.storage.from(HILOS_BUCKET).getPublicUrl(path);
-          const thumbnail = file.type.startsWith('image/') ? await generateThumbnail(file) : null;
           const attachment: Attachment = { id: attachmentId, url: publicUrl, name: file.name, type: fileType, size: compressedSize };
-          if (thumbnail) attachment.thumbnailUrl = thumbnail;
+          const thumbBlob = file.type.startsWith('image/') ? await generateThumbnail(file) : undefined;
+          if (thumbBlob) {
+            const thumbPath = `${uid}/thumbs/${Date.now()}_${attachmentId}.jpg`;
+            const { error: thumbErr } = await supabase.storage
+              .from(HILOS_BUCKET).upload(thumbPath, thumbBlob, { upsert: true, cacheControl: '3600', contentType: 'image/jpeg' });
+            // Si la miniatura falla, la grilla usa la imagen completa: no se bloquea el adjunto.
+            if (!thumbErr) attachment.thumbnailUrl = supabase.storage.from(HILOS_BUCKET).getPublicUrl(thumbPath).data.publicUrl;
+            else console.error('Error subiendo miniatura:', thumbErr.message);
+          }
           result.push(attachment);
         }
       } catch (err) { alert(`Error inesperado al subir "${file.name}"`); }
@@ -406,7 +548,10 @@ const HilosComponent: React.FC = () => {
 
   const deleteAttachments = useCallback(async (attachments: Attachment[]) => {
     if (!attachments?.length) return;
-    const paths = attachments.map(a => getSupabasePath(a.url)).filter(Boolean);
+    // Incluye las miniaturas subidas al bucket (las viejas en base64 no tienen ruta).
+    const paths = attachments
+      .flatMap(a => [a.url, a.thumbnailUrl].filter((u): u is string => !!u && !u.startsWith('data:')))
+      .map(getSupabasePath).filter(Boolean);
     if (paths.length) {
       const { error } = await supabase.storage.from(HILOS_BUCKET).remove(paths);
       if (error) console.error('Error eliminando archivos:', error.message);
@@ -473,12 +618,33 @@ const HilosComponent: React.FC = () => {
   /* ═══════════════════════════════
      CRUD REPLIES
   ═══════════════════════════════ */
+  // Una notificación por respuesta con los destinatarios en `toUids`. Se
+  // conservan los campos de antes (mentionedUsers ahora lleva los nombres).
+  // Si falla, la respuesta ya está publicada: solo se registra el error.
+  const notificarMenciones = useCallback(async (mentionUids: string[], replyId: string) => {
+    if (!selectedHilo) return;
+    const destinatarios = mentionUids.filter(m => m !== uid);
+    if (destinatarios.length === 0) return;
+    try {
+      await addDoc(collection(db, 'notifications'), {
+        type: 'mention', hiloId: selectedHilo.id, hiloTitle: selectedHilo.title, replyId,
+        toUids: destinatarios,
+        mentionedUsers: destinatarios.map(m => usuarios.find(u => u.uid === m)?.displayName || m),
+        authorUid: uid, authorName: userProfile?.displayName || '',
+        createdAt: Timestamp.now(), readBy: []
+      });
+    } catch (e) { console.error('Error notificando menciones:', e); }
+  }, [selectedHilo, uid, usuarios, userProfile?.displayName]);
+
   const handleReply = useCallback(async () => {
     if (!selectedHilo || !replyBody.trim()) return;
     if (selectedHilo.locked && !isAdmin) { alert('Este hilo está cerrado'); return; }
     setSubmittingReply(true);
     try {
-      const mentions = replyBody.match(/@(\w+)/g)?.map(m => m.slice(1)) || [];
+      // Antes `@(\w+)` guardaba trozos de nombre (cortaba en tildes y espacios)
+      // y la notificación no tenía destinatario. Ahora: uids de los usuarios
+      // cuyo "@Nombre" aparece en el texto.
+      const mentions = extraerMenciones(replyBody, usuarios);
       const replyData = {
         hiloId: selectedHilo.id, authorUid: uid,
         authorName: userProfile?.displayName || '',
@@ -498,28 +664,26 @@ const HilosComponent: React.FC = () => {
       });
       try { localStorage.setItem(claveMiRespuesta(uid, selectedHilo.id), String(ahora.toMillis())); } catch { /* sin storage */ }
       await batch.commit();
-      if (mentions.length > 0) {
-        await addDoc(collection(db, 'notifications'), {
-          type: 'mention', hiloId: selectedHilo.id, replyId: replyRef.id,
-          mentionedUsers: mentions, authorName: userProfile?.displayName || '',
-          createdAt: Timestamp.now(), readBy: []
-        });
-      }
-      setReplyBody(''); setReplyAttachments([]); setReplyingTo(null);
+      await notificarMenciones(mentions, replyRef.id);
+      setReplyBody(''); setReplyAttachments([]); setReplyingTo(null); setShowMentions(false);
     } catch (e) { console.error(e); alert('Error al responder'); }
     finally { setSubmittingReply(false); }
-  }, [selectedHilo, replyBody, replyAttachments, uid, userProfile, isAdmin, replyingTo]);
+  }, [selectedHilo, replyBody, replyAttachments, uid, userProfile, isAdmin, replyingTo, usuarios, notificarMenciones]);
 
   const handleUpdateReply = useCallback(async () => {
     if (!selectedHilo || !editingReply || !replyBody.trim()) return;
     try {
+      const mentions = extraerMenciones(replyBody, usuarios);
       await updateDoc(doc(db, 'hilos', selectedHilo.id, 'replies', editingReply.id), {
         body: replyBody.trim(), attachments: replyAttachments,
-        edited: true, editedAt: Timestamp.now()
+        edited: true, editedAt: Timestamp.now(), mentions
       });
-      setEditingReply(null); setReplyBody(''); setReplyAttachments([]);
+      // Solo se avisa a quien se agregó al editar, no otra vez a los de antes.
+      const previas = new Set(editingReply.mentions ?? []);
+      await notificarMenciones(mentions.filter(m => !previas.has(m)), editingReply.id);
+      setEditingReply(null); setReplyBody(''); setReplyAttachments([]); setShowMentions(false);
     } catch (e) { console.error(e); alert('Error al editar respuesta'); }
-  }, [selectedHilo, editingReply, replyBody, replyAttachments]);
+  }, [selectedHilo, editingReply, replyBody, replyAttachments, usuarios, notificarMenciones]);
 
   const startEditReply = useCallback((reply: Reply) => {
     setEditingReply(reply); setReplyBody(reply.body);
@@ -545,26 +709,33 @@ const HilosComponent: React.FC = () => {
   }, [selectedHilo, uid]);
 
   /* ─── Acciones admin ─── */
+  // Las acciones avisan si fallan (antes la promesa rechazada se perdía sin aviso).
   const togglePin = useCallback(async (hilo: Hilo) => {
     const updateData: Record<string, any> = { pinned: !hilo.pinned };
     if (!hilo.pinned) updateData.pinnedAt = Timestamp.now();
     else updateData.pinnedAt = deleteField();
-    await updateDoc(doc(db, 'hilos', hilo.id), updateData);
+    try { await updateDoc(doc(db, 'hilos', hilo.id), updateData); }
+    catch (e) { console.error(e); alert('No se pudo fijar/desfijar el hilo'); }
   }, []);
 
   const toggleLock = useCallback(async (hilo: Hilo) => {
-    await updateDoc(doc(db, 'hilos', hilo.id), { locked: !hilo.locked });
+    try { await updateDoc(doc(db, 'hilos', hilo.id), { locked: !hilo.locked }); }
+    catch (e) { console.error(e); alert('No se pudo cambiar el estado del hilo'); }
   }, []);
 
   const archiveHilo = useCallback(async (hilo: Hilo) => {
     if (!confirm('¿Archivar este hilo? Podrás recuperarlo después.')) return;
-    await updateDoc(doc(db, 'hilos', hilo.id), { archived: true, archivedAt: Timestamp.now() });
-    setSelectedHilo(null);
+    try {
+      await updateDoc(doc(db, 'hilos', hilo.id), { archived: true, archivedAt: Timestamp.now() });
+      setSelectedHilo(null);
+    } catch (e) { console.error(e); alert('No se pudo archivar el hilo'); }
   }, []);
 
   const unarchiveHilo = useCallback(async (hilo: Hilo) => {
-    await updateDoc(doc(db, 'hilos', hilo.id), { archived: false, archivedAt: deleteField() });
-    setSelectedHilo(null);
+    try {
+      await updateDoc(doc(db, 'hilos', hilo.id), { archived: false, archivedAt: deleteField() });
+      setSelectedHilo(null);
+    } catch (e) { console.error(e); alert('No se pudo desarchivar el hilo'); }
   }, []);
 
   const deleteHilo = useCallback(async (hilo: Hilo) => {
@@ -596,10 +767,13 @@ const HilosComponent: React.FC = () => {
 
   const toggleSubscription = useCallback(async (hilo: Hilo) => {
     const isSubscribed = hilo.subscribers?.includes(uid);
-    const newSubs = isSubscribed
-      ? hilo.subscribers.filter(s => s !== uid)
-      : [...(hilo.subscribers || []), uid];
-    await updateDoc(doc(db, 'hilos', hilo.id), { subscribers: newSubs });
+    // arrayUnion/arrayRemove: reescribir la lista entera pisaba a quien se
+    // suscribía al mismo tiempo.
+    try {
+      await updateDoc(doc(db, 'hilos', hilo.id), {
+        subscribers: isSubscribed ? arrayRemove(uid) : arrayUnion(uid),
+      });
+    } catch (e) { console.error(e); alert('No se pudo cambiar la suscripción'); }
   }, [uid]);
 
   /* ─── Utilities ─── */
@@ -796,28 +970,44 @@ const HilosComponent: React.FC = () => {
     );
   }, []);
 
-  const MentionSuggestions = useCallback(() => {
-    if (!showMentions) return null;
-    const suggestions = onlineUsers.filter(u => u.displayName.toLowerCase().includes(mentionQuery.toLowerCase()));
-    return (
-      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-        className="absolute bottom-full left-0 mb-2 bg-zinc-900 border border-zinc-800 rounded-xl p-2 min-w-[200px] shadow-2xl z-30">
-        {suggestions.map(user => (
-          <button key={user.uid}
-            onClick={() => {
-              const before = replyBody.slice(0, cursorPosition);
-              const after = replyBody.slice(cursorPosition);
-              setReplyBody(before + user.displayName + ' ' + after);
-              setShowMentions(false);
-            }}
-            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-zinc-800 transition-colors text-left">
-            <Avatar src={user.avatar} name={user.displayName} size="sm" isOnline={user.isOnline} />
-            <span className="text-zinc-300 text-sm">{user.displayName}</span>
-          </button>
-        ))}
-      </motion.div>
-    );
-  }, [showMentions, mentionQuery, onlineUsers, cursorPosition, replyBody]);
+  /* ─── Menciones: autocompletado con la lista de usuarios ─── */
+  // Antes filtraba solo a los conectados al hilo y con una búsqueda que nunca
+  // cambiaba; además insertaba el nombre sin "@" y no reemplazaba lo escrito.
+  const sugerenciasMencion = useMemo(() => {
+    if (!showMentions) return [];
+    const q = normalizar(mentionQuery);
+    return usuarios
+      .filter(u => u.uid !== uid && normalizar(u.displayName).includes(q))
+      .slice(0, MAX_MENTION_SUGGESTIONS);
+  }, [showMentions, mentionQuery, usuarios, uid]);
+
+  // Detecta si el cursor está justo después de "@algo" y abre/cierra la lista.
+  const actualizarMencion = useCallback((texto: string, cursor: number) => {
+    const m = MENCION_EN_CURSOR.exec(texto.slice(0, cursor));
+    if (m) {
+      setShowMentions(true);
+      setMentionQuery(m[2]);
+      setMentionStart(cursor - m[2].length - 1);
+      setCursorPosition(cursor);
+      setMentionIndex(0);
+    } else {
+      setShowMentions(false);
+    }
+  }, []);
+
+  const insertarMencion = useCallback((user: UsuarioMencion) => {
+    const before = replyBody.slice(0, mentionStart);
+    const after = replyBody.slice(cursorPosition);
+    const insertado = `@${user.displayName} `;
+    setReplyBody(before + insertado + after);
+    setShowMentions(false);
+    const pos = before.length + insertado.length;
+    // Devuelve el foco con el cursor después del nombre insertado.
+    requestAnimationFrame(() => {
+      const ta = replyTextRef.current;
+      if (ta) { ta.focus(); ta.setSelectionRange(pos, pos); }
+    });
+  }, [replyBody, mentionStart, cursorPosition]);
 
   /* ─── Sidebar content (reutilizable) ─── */
   const SidebarContent = useCallback(() => (
@@ -1030,6 +1220,16 @@ const HilosComponent: React.FC = () => {
             <div className="flex flex-col items-center justify-center py-20 gap-3">
               <RefreshCw className="w-5 h-5 animate-spin text-zinc-600" />
               <p className="text-zinc-600 text-xs">Cargando hilos...</p>
+            </div>
+          ) : (showArchived ? errorArchivados : errorHilos) ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center px-4">
+              <div className="w-14 h-14 bg-red-500/10 rounded-full flex items-center justify-center mb-4">
+                <AlertCircle className="w-7 h-7 text-red-400" strokeWidth={1.5} />
+              </div>
+              <p className="text-zinc-300 text-sm font-medium mb-1">No se pudieron cargar los hilos</p>
+              <p className="text-zinc-500 text-xs break-words select-text max-w-full">
+                {showArchived ? errorArchivados : errorHilos}
+              </p>
             </div>
           ) : filteredHilos.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 text-center px-4">
@@ -1259,6 +1459,12 @@ const HilosComponent: React.FC = () => {
                     <RefreshCw className="w-5 h-5 animate-spin text-zinc-600" />
                     <p className="text-zinc-600 text-xs">Cargando respuestas...</p>
                   </div>
+                ) : errorReplies && errorReplies.hiloId === selectedHilo.id ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-center">
+                    <AlertCircle className="w-6 h-6 text-red-400 mb-3" />
+                    <p className="text-zinc-400 text-sm font-medium mb-1">No se pudieron cargar las respuestas</p>
+                    <p className="text-zinc-600 text-xs break-words select-text">{errorReplies.msg}</p>
+                  </div>
                 ) : replies.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-12 text-center">
                     <div className="w-12 h-12 bg-zinc-900 rounded-full flex items-center justify-center mb-3">
@@ -1372,14 +1578,43 @@ const HilosComponent: React.FC = () => {
                   <div className="flex gap-2 sm:gap-3 mt-2">
                     <Avatar src={userProfile?.avatar} name={userProfile?.displayName || ''} />
                     <div className="flex-1 relative min-w-0">
+                      {/* Sugerencias de @mención: fuera de la caja con overflow-hidden para que no se recorten */}
+                      {showMentions && sugerenciasMencion.length > 0 && (
+                        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+                          className="absolute bottom-full left-0 mb-2 bg-zinc-900 border border-zinc-800 rounded-xl p-2 min-w-[200px] max-w-full shadow-2xl z-30">
+                          {sugerenciasMencion.map((user, i) => (
+                            <button key={user.uid} type="button"
+                              onMouseDown={e => e.preventDefault()}
+                              onClick={() => insertarMencion(user)}
+                              className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg transition-colors text-left ${
+                                i === mentionIndex ? 'bg-zinc-800' : 'hover:bg-zinc-800'}`}>
+                              <Avatar src={user.avatar} name={user.displayName} size="sm"
+                                isOnline={onlineUsers.some(o => o.uid === user.uid)} />
+                              <span className="text-zinc-300 text-sm truncate">{user.displayName}</span>
+                            </button>
+                          ))}
+                        </motion.div>
+                      )}
                       <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden focus-within:border-zinc-700 focus-within:ring-1 focus-within:ring-zinc-700 transition-all">
                         <textarea ref={replyTextRef} value={replyBody}
                           onChange={e => {
                             setReplyBody(e.target.value);
-                            if (e.target.value.slice(-1) === '@') { setShowMentions(true); setCursorPosition(e.target.selectionStart); }
-                            else if (showMentions && !e.target.value.includes('@')) setShowMentions(false);
+                            actualizarMencion(e.target.value, e.target.selectionStart);
                           }}
+                          // Mover el cursor (clic, flechas) también abre/cierra la lista.
+                          onSelect={e => actualizarMencion(e.currentTarget.value, e.currentTarget.selectionStart)}
+                          onBlur={() => setShowMentions(false)}
                           onKeyDown={e => {
+                            if (showMentions && sugerenciasMencion.length > 0) {
+                              if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIndex(i => (i + 1) % sugerenciasMencion.length); return; }
+                              if (e.key === 'ArrowUp') { e.preventDefault(); setMentionIndex(i => (i - 1 + sugerenciasMencion.length) % sugerenciasMencion.length); return; }
+                              if ((e.key === 'Enter' && !e.ctrlKey && !e.metaKey) || e.key === 'Tab') {
+                                e.preventDefault();
+                                insertarMencion(sugerenciasMencion[Math.min(mentionIndex, sugerenciasMencion.length - 1)]);
+                                return;
+                              }
+                              if (e.key === 'Escape') { e.preventDefault(); setShowMentions(false); return; }
+                            }
                             if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
                               e.preventDefault();
                               editingReply ? handleUpdateReply() : handleReply();
@@ -1389,7 +1624,6 @@ const HilosComponent: React.FC = () => {
                           rows={3} maxLength={5000}
                           className="w-full bg-transparent text-white text-sm focus:outline-none resize-none placeholder:text-zinc-600 leading-relaxed px-3 py-2.5"
                         />
-                        <MentionSuggestions />
                         <div className="flex items-center justify-between px-2.5 py-2 border-t border-zinc-800/50">
                           <div className="flex items-center gap-1">
   <input ref={fileReplyRef} type="file" multiple accept="image/*,.pdf,.doc,.docx,.txt"
@@ -1574,10 +1808,10 @@ const HilosComponent: React.FC = () => {
                     className="p-2 text-zinc-500 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors">
                     <Download className="w-4 h-4" />
                   </button>
-                  <a href={viewerFile.url} target="_blank" rel="noopener noreferrer"
+                  <button onClick={() => void abrirExterno(viewerFile.url)} title="Abrir fuera de la app"
                     className="p-2 text-zinc-500 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors inline-flex">
                     <ExternalLink className="w-4 h-4" />
-                  </a>
+                  </button>
                   <button onClick={() => setViewerFile(null)}
                     className="p-2 text-zinc-500 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors">
                     <X className="w-4 h-4" />
@@ -1585,33 +1819,29 @@ const HilosComponent: React.FC = () => {
                 </div>
               </div>
               <div className="flex-1 flex items-center justify-center p-4 bg-zinc-950 overflow-auto">
-                {viewerFile.type.startsWith('image/') ? (
+                {tipoVista(viewerFile) === 'imagen' ? (
                   <img src={viewerFile.url} alt={viewerFile.name}
                     className="max-w-full max-h-[70vh] object-contain rounded-lg shadow-2xl" />
-                ) : viewerFile.type === 'application/pdf' ? (
+                ) : tipoVista(viewerFile) === 'pdf' ? (
                   <iframe src={`${viewerFile.url}#toolbar=1`} className="w-full h-[70vh] border-0 rounded-lg" title={viewerFile.name} />
+                ) : tipoVista(viewerFile) === 'texto' ? (
+                  <iframe src={viewerFile.url} className="w-full h-[70vh] border-0 rounded-lg bg-white" title={viewerFile.name} />
                 ) : (
-                  viewerFile.type.includes('word') || viewerFile.type.includes('excel') ||
-                  viewerFile.type.includes('spreadsheet') || viewerFile.type.includes('presentation') ||
-                  viewerFile.type.includes('powerpoint') ||
-                  viewerFile.name.match(/\.(docx?|xlsx?|pptx?|odt|ods|odp)$/i) ? (
-                    <iframe src={getGoogleViewerUrl(viewerFile.url)} className="w-full h-[70vh] border-0 rounded-lg" title={viewerFile.name} />
-                  ) : (
-                    <div className="text-center py-12">
-                      <File className="w-14 h-14 text-zinc-700 mx-auto mb-4" />
-                      <p className="text-zinc-500 text-sm mb-4">Vista previa no disponible</p>
-                      <div className="flex items-center justify-center gap-3 flex-wrap">
-                        <a href={viewerFile.url} target="_blank" rel="noopener noreferrer"
-                          className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white text-sm rounded-lg transition-colors inline-flex items-center gap-2">
-                          <ExternalLink className="w-4 h-4" />Abrir en pestaña
-                        </a>
-                        <button onClick={() => handleDownload(viewerFile)}
-                          className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white text-sm rounded-lg transition-colors inline-flex items-center gap-2">
-                          <Download className="w-4 h-4" />Descargar
-                        </button>
-                      </div>
+                  // Word, Excel, etc.: sin visor de terceros; se abre o se descarga.
+                  <div className="text-center py-12">
+                    <File className="w-14 h-14 text-zinc-700 mx-auto mb-4" />
+                    <p className="text-zinc-500 text-sm mb-4">Vista previa no disponible para este tipo de archivo</p>
+                    <div className="flex items-center justify-center gap-3 flex-wrap">
+                      <button onClick={() => void abrirExterno(viewerFile.url)}
+                        className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white text-sm rounded-lg transition-colors inline-flex items-center gap-2">
+                        <ExternalLink className="w-4 h-4" />Abrir
+                      </button>
+                      <button onClick={() => handleDownload(viewerFile)}
+                        className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white text-sm rounded-lg transition-colors inline-flex items-center gap-2">
+                        <Download className="w-4 h-4" />Descargar
+                      </button>
                     </div>
-                  )
+                  </div>
                 )}
               </div>
             </div>
@@ -1830,12 +2060,22 @@ export const HilosObserverView: React.FC<{ hiloId: string }> = ({ hiloId }) => {
                 </button>
               </div>
               <div className="flex-1 p-4 bg-zinc-950 overflow-auto">
-                {viewerFile.type.startsWith('image/') ? (
+                {tipoVista(viewerFile) === 'imagen' ? (
                   <img src={viewerFile.url} alt={viewerFile.name} className="max-w-full max-h-[70vh] object-contain rounded-lg mx-auto block" />
-                ) : viewerFile.type === 'application/pdf' ? (
+                ) : tipoVista(viewerFile) === 'pdf' ? (
                   <iframe src={viewerFile.url} className="w-full h-[70vh] border-0 rounded-lg" title={viewerFile.name} />
+                ) : tipoVista(viewerFile) === 'texto' ? (
+                  <iframe src={viewerFile.url} className="w-full h-[70vh] border-0 rounded-lg bg-white" title={viewerFile.name} />
                 ) : (
-                  <iframe src={getGoogleViewerUrl(viewerFile.url)} className="w-full h-[70vh] border-0 rounded-lg" title={viewerFile.name} />
+                  // Sin visor de Google: se ofrece abrir el archivo directamente.
+                  <div className="text-center py-12">
+                    <File className="w-14 h-14 text-zinc-700 mx-auto mb-4" />
+                    <p className="text-zinc-500 text-sm mb-4">Vista previa no disponible para este tipo de archivo</p>
+                    <button onClick={() => void abrirExterno(viewerFile.url)}
+                      className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white text-sm rounded-lg transition-colors inline-flex items-center gap-2">
+                      <Download className="w-4 h-4" />Abrir / descargar
+                    </button>
+                  </div>
                 )}
               </div>
             </div>

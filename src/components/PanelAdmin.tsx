@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { db } from '@/lib/firebase';
+import { db, subscribeToUsers } from '@/lib/firebase';
 import {
-  collection, onSnapshot, query, orderBy, limit,
-  getDocs, getCountFromServer,
+  collection, onSnapshot, query, orderBy, limit, where,
+  getDocs, getCountFromServer, Timestamp,
 } from 'firebase/firestore';
+import { getVersion } from '@tauri-apps/api/app';
+import { isTauri } from '@tauri-apps/api/core';
+import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import type { SystemLog, LogLevel, UserRole } from '@/types';
 import {
@@ -14,7 +17,7 @@ import {
   AlertCircle, Eye, Package,
   X,
 } from 'lucide-react';
-import { format, subDays, startOfHour, isAfter } from 'date-fns';
+import { format, subDays, subHours, startOfHour, isAfter } from 'date-fns';
 
 // ─── Constantes ──────────────────────────────────────────────────────────────
 const LOG_META: Record<LogLevel, { label: string; color: string; bg: string; icon: React.FC<any> }> = {
@@ -31,7 +34,7 @@ const ROLE_COLORS: Record<string, string> = {
   Secretaría:     '#4ade80',
   Programación:   '#f472b6',
   Contador:       '#34d399',
-  Empleado:       '#6b7280',
+  Empleado:       '#94a3b8',
 };
 
 const MODULES = ['auth', 'users', 'admin', 'diseno', 'secretaria', 'programacion', 'contador', 'discord', 'correo', 'system'];
@@ -48,6 +51,11 @@ const COLLECTIONS: { id: string; label: string; color: string }[] = [
   { id: 'bug_reports',     label: 'Bug Reports',       color: '#fb923c' },
   { id: 'maintenance',     label: 'Mantenimiento',     color: '#34d399' },
 ];
+
+// Módulos que cuentan como auditoría (cuentas, roles y acciones de admin).
+// Una sola lista para el filtro y para el chequeo de "vacío".
+const AUDIT_MODULES = ['auth', 'admin', 'users'];
+const AUDIT_HORAS   = 48;
 
 const ROLE_ORDER: UserRole[] = ['CEO', 'Administración', 'Diseño', 'Secretaría', 'Programación', 'Contador', 'Empleado'];
 
@@ -115,7 +123,31 @@ export default function PanelAdmin() {
   const [logLimit,       setLogLimit]       = useState(200);
   const [expandedLog,    setExpandedLog]    = useState<string | null>(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [statsError,     setStatsError]     = useState<string | null>(null);
+  const [userCount,      setUserCount]      = useState<number | null>(null);
+  const [appVersion,     setAppVersion]     = useState<string>(
+    // En web no hay versión de Tauri: se muestra la del build si existe.
+    (import.meta.env.VITE_APP_VERSION as string | undefined) || '—'
+  );
   const exportRef = useRef<HTMLDivElement>(null);
+
+  // ── Versión real de la app ─────────────────────────────────────────────────
+  // Igual que Ajustes: en el escritorio se le pregunta a Tauri; en web se queda
+  // la del build (o "—").
+  useEffect(() => {
+    if (!isTauri()) return;
+    getVersion().then(setAppVersion).catch(() => {});
+  }, []);
+
+  // ── Conteo de usuarios para el encabezado ──────────────────────────────────
+  // Antes salía "—" hasta abrir Estadísticas; ahora se escucha desde el inicio.
+  useEffect(() => {
+    const unsub = subscribeToUsers(
+      lista => setUserCount(lista.length),
+      err => console.error('PanelAdmin usuarios:', err),
+    );
+    return () => unsub();
+  }, []);
 
   // ── Suscripción real a logs ────────────────────────────────────────────────
   // `activityLogs` es donde escribe todo el portal (lib/firebase.ts →
@@ -178,8 +210,11 @@ export default function PanelAdmin() {
       const errorRate  = allLogs.length > 0 ? Math.round((errores / allLogs.length) * 100) : 0;
 
       setStats({ totalUsers: usersSnap.size, byRole, totalDocs, errorRate, logsHoy, logsHora });
+      setStatsError(null);
     } catch (err) {
       console.error('loadStats:', err);
+      setStatsError('No se pudieron calcular las estadísticas. Inténtalo de nuevo.');
+      toast.error('No se pudieron cargar las estadísticas');
     } finally {
       setLoadingStats(false);
     }
@@ -189,8 +224,39 @@ export default function PanelAdmin() {
     if (activeTab === 'estadisticas') loadStats();
   }, [activeTab, loadStats]);
 
+  // ── Auditoría: últimas 48 h ───────────────────────────────────────────────
+  // Consulta propia por fecha: la lista de Logs está limitada a N entradas y
+  // podía cortar eventos de las últimas 48 h (o mostrar otros más viejos).
+  const [auditLogs,  setAuditLogs]  = useState<LogEntry[] | null>(null);
+  const [auditError, setAuditError] = useState<string | null>(null);
+  useEffect(() => {
+    if (activeTab !== 'auditoria') return;
+    const desde = Timestamp.fromDate(subHours(new Date(), AUDIT_HORAS));
+    const q = query(
+      collection(db, 'activityLogs'),
+      where('createdAt', '>=', desde),
+      orderBy('createdAt', 'desc'),
+      limit(500),
+    );
+    const unsub = onSnapshot(q, snap => {
+      setAuditLogs(snap.docs.map(d => aLogEntry(d.id, d.data())));
+      setAuditError(null);
+    }, err => { setAuditError(err.message); setAuditLogs([]); });
+    return () => unsub();
+  }, [activeTab]);
+
+  // Se vuelve a cortar por fecha aquí por si la pestaña queda abierta mucho rato.
+  const auditCorte    = subHours(new Date(), AUDIT_HORAS);
+  const auditFiltrado = (auditLogs ?? [])
+    .filter(l => AUDIT_MODULES.includes(l.module) && isAfter(l.createdAt, auditCorte));
+
   // ── Exportar ──────────────────────────────────────────────────────────────
   const handleExport = (format_: 'json' | 'csv') => {
+    if (filteredLogs.length === 0) {
+      toast.info('No hay logs para exportar');
+      setShowExportMenu(false);
+      return;
+    }
     const data = filteredLogs.map(l => ({
       nivel:   l.level,
       módulo:  l.module,
@@ -245,7 +311,7 @@ export default function PanelAdmin() {
           </div>
           <div>
             <h1 className="text-white text-xl font-light">Panel de Administración</h1>
-            <p className="text-zinc-500 text-sm font-light">{logs.length} logs · {stats?.totalUsers ?? '—'} usuarios</p>
+            <p className="text-zinc-500 text-sm font-light">{logs.length} logs · {userCount ?? stats?.totalUsers ?? '—'} usuarios</p>
           </div>
         </div>
 
@@ -630,7 +696,9 @@ export default function PanelAdmin() {
           ) : (
             <div className="py-16 text-center rounded-2xl" style={{ border: `1px dashed ${bd}` }}>
               <BarChart3 className="w-10 h-10 text-zinc-800 mx-auto mb-3" strokeWidth={1} />
-              <p className="text-zinc-500 text-sm font-light">Cargando estadísticas...</p>
+              <p className={`text-sm font-light ${statsError ? 'text-red-400' : 'text-zinc-500'}`}>
+                {statsError ?? 'Cargando estadísticas...'}
+              </p>
             </div>
           )}
         </div>
@@ -643,20 +711,30 @@ export default function PanelAdmin() {
             <div className="px-5 py-4 flex items-center gap-2" style={{ background: 'rgba(255,255,255,0.025)', borderBottom: `1px solid ${bd}` }}>
               <Eye className="w-4 h-4 text-zinc-500" strokeWidth={1.5} />
               <p className="text-white text-sm font-light">Registro de acciones</p>
-              <span className="text-zinc-600 text-xs font-light ml-auto">Últimas 48h</span>
+              <span className="text-zinc-600 text-xs font-light ml-auto">Últimas {AUDIT_HORAS}h</span>
             </div>
-            {logs.filter(l => l.module === 'auth' || l.module === 'admin').length === 0 ? (
+            {auditLogs === null ? (
+              <div className="py-12 flex items-center justify-center gap-3">
+                <div className="w-5 h-5 border border-zinc-700 border-t-zinc-400 rounded-full animate-spin" />
+                <span className="text-zinc-600 text-sm font-light">Cargando auditoría...</span>
+              </div>
+            ) : auditError ? (
+              <div className="py-12 text-center px-4">
+                <AlertCircle className="w-8 h-8 text-red-400/70 mx-auto mb-3" strokeWidth={1} />
+                <p className="text-red-400 text-sm font-light">No se pudo leer la auditoría</p>
+                <p className="text-zinc-600 text-xs font-light mt-1">{auditError}</p>
+              </div>
+            ) : auditFiltrado.length === 0 ? (
               <div className="py-12 text-center">
                 <Eye className="w-8 h-8 text-zinc-800 mx-auto mb-3" strokeWidth={1} />
                 <p className="text-zinc-600 text-sm font-light">Sin eventos de auditoría recientes</p>
               </div>
             ) : (
               <div className="divide-y" style={{ borderColor: "rgba(255,255,255,0.04)" }}>
-                {logs
-                  .filter(l => ['auth', 'admin', 'users'].includes(l.module))
+                {auditFiltrado
                   .slice(0, 50)
                   .map(log => {
-                    const meta = LOG_META[log.level];
+                    const meta = LOG_META[log.level] ?? LOG_META.info;
                     return (
                       <div key={log.id} className="flex items-start gap-4 px-5 py-3.5 hover:bg-white/[0.015] transition-colors">
                         <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5"
@@ -695,15 +773,16 @@ export default function PanelAdmin() {
             </div>
             <div className="divide-y" style={{ borderColor: "rgba(255,255,255,0.04)" }}>
               {[
-                { label: 'Versión Dashboard',  value: '2.1.0',                                       color: '#60a5fa' },
+                { label: 'Versión Dashboard',  value: appVersion,                                    color: '#60a5fa' },
                 { label: 'Backend',            value: 'Firebase Firestore + Supabase Storage',        color: null },
                 { label: 'Autenticación',      value: 'Firebase Auth',                               color: null },
-                { label: 'Frontend',           value: 'React 18 + TailwindCSS + Radix UI',           color: null },
+                { label: 'Frontend',           value: 'React 19 + TailwindCSS + Radix UI',           color: null },
                 { label: 'Bot Discord',        value: 'Luna NET (Node.js + Discord.js v14)',          color: null },
                 { label: 'Administrador',      value: userProfile?.displayName ?? '—',               color: '#34d399' },
                 { label: 'Rol',               value: userProfile?.role ?? '—',                       color: ROLE_COLORS[userProfile?.role ?? ''] ?? null },
                 { label: 'UID',               value: currentUser?.uid ?? '—',                        color: null },
-                { label: 'Sesión iniciada',   value: currentUser?.metadata?.creationTime ? format(new Date(currentUser.metadata.creationTime), 'dd/MM/yyyy HH:mm') : '—', color: null },
+                // lastSignInTime es el último inicio de sesión; creationTime era la fecha de alta de la cuenta.
+                { label: 'Sesión iniciada',   value: currentUser?.metadata?.lastSignInTime ? format(new Date(currentUser.metadata.lastSignInTime), 'dd/MM/yyyy HH:mm') : '—', color: null },
               ].map(item => (
                 <div key={item.label} className="flex items-center justify-between px-5 py-3.5 hover:bg-white/[0.01] transition-colors">
                   <span className="text-zinc-500 text-sm font-light">{item.label}</span>
@@ -721,7 +800,7 @@ export default function PanelAdmin() {
             </div>
             <div className="flex flex-wrap gap-2">
               {[
-                { name: 'React 18',    color: '#61dafb' },
+                { name: 'React 19',    color: '#61dafb' },
                 { name: 'TypeScript',  color: '#3178c6' },
                 { name: 'TailwindCSS', color: '#06b6d4' },
                 { name: 'Firebase',    color: '#f59e0b' },

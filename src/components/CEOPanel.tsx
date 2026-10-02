@@ -7,10 +7,11 @@ import EmployeeCredentialModal from '@/components/EmployeeCredentialModal';
 import BarcodeScannerModal    from '@/components/BarcodeScannerModal';
 import EmployeeContractModal  from '@/components/EmployeeContractModal';
 import { 
-  subscribeToUsers, subscribeToTasks, createTask, deleteTask,
+  subscribeToUsers, subscribeToTasks, createTask, deleteTask, updateTask,
   logActivity, updateUserProfile,
   deleteUserData, createUserWithRole
 } from '@/lib/firebase';
+import { toast } from 'sonner';
 import { supabase, REPORTS_BUCKET } from '@/lib/supabaseclient';
 import { collection, getDocs, query, orderBy, onSnapshot, doc, deleteDoc, writeBatch, addDoc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
@@ -145,6 +146,26 @@ const REPORT_STATUS_CONFIG = {
 };
 
 const ALL_ROLES_LIST: UserRole[] = ['CEO','Administración','Diseño','Secretaría','Programación','Contador','Empleado'];
+// Roles que el CEO puede asignar: el de CEO no se reparte desde el panel
+// (igual que en Gestión de Roles).
+const ASSIGNABLE_ROLES: UserRole[] = ALL_ROLES_LIST.filter(r => r !== 'CEO');
+
+type TaskStatus = 'pending' | 'in-progress' | 'completed';
+const TASK_STATUS_CONFIG: Record<TaskStatus, { label: string; color: string }> = {
+  pending:       { label: '• Pendiente',   color: '#fb923c' },
+  'in-progress': { label: '⏳ En progreso', color: '#60a5fa' },
+  completed:     { label: '✓ Completada',  color: '#34d399' },
+};
+const taskStatusCfg = (status: unknown) =>
+  TASK_STATUS_CONFIG[status as TaskStatus] ?? TASK_STATUS_CONFIG.pending;
+
+// Firebase y la API del bot lanzan objetos con code/message; se leen sin `any`.
+const infoError = (e: unknown) => (e ?? {}) as { code?: string; message?: string };
+
+// Si el bot dice que la cuenta de Auth ya no existe, el perfil igual se puede borrar.
+// Sin "404" a secas: si la ruta no existe en el bot también daría 404 y se
+// volvería a borrar el perfil dejando vivo el login.
+const esUsuarioInexistente = (msg: string) => /user-not-found|usuario no existe|no existe el usuario/i.test(msg);
 
 const getRoleConfig = (role: string, allRoles: string[]) => {
   const idx = allRoles.indexOf(role);
@@ -260,7 +281,7 @@ const CEOPanel: React.FC = () => {
   const [showContract,    setShowContract]     = useState(false);
   const [refreshing,      setRefreshing]       = useState(false);
   const [reports,         setReports]          = useState<TaskReport[]>([]);
-  const [reportsLoading,  setReportsLoading]   = useState(false);
+  const [reportsLoading,  setReportsLoading]   = useState(true);
   const [reportFilter,    setReportFilter]     = useState<'all' | 'completed' | 'in-progress' | 'not-completed'>('all');
   const [reportSearch,    setReportSearch]     = useState('');
   const [selectedReport,  setSelectedReport]   = useState<TaskReport | null>(null);
@@ -320,8 +341,8 @@ const CEOPanel: React.FC = () => {
   useEffect(() => {
     let pendientes = 2;
     const listo = () => { pendientes -= 1; if (pendientes <= 0) setLoading(false); };
-    const u1 = subscribeToUsers(u => { setUsers(u as UserProfile[]); listo(); }, e => { console.error(e); listo(); });
-    const u2 = subscribeToTasks(t => { setTasks(t); listo(); }, e => { console.error(e); listo(); });
+    const u1 = subscribeToUsers(u => { setUsers(u as UserProfile[]); listo(); }, e => { console.error(e); toast.error('No se pudieron cargar los usuarios'); listo(); });
+    const u2 = subscribeToTasks(t => { setTasks(t); listo(); }, e => { console.error(e); toast.error('No se pudieron cargar las tareas'); listo(); });
     return () => { u1(); u2(); };
   }, []);
 
@@ -330,7 +351,7 @@ const CEOPanel: React.FC = () => {
   const fetchReports = useCallback(async () => {}, []);
   useEffect(() => onSnapshot(query(collection(db, 'taskReports'), orderBy('createdAt', 'desc')),
     snap => { setReports(snap.docs.map(d => aReporte(d.id, d.data()))); setReportsLoading(false); },
-    e => { console.error('Error escuchando reportes:', e); setReportsLoading(false); }), []);
+    e => { console.error('Error escuchando reportes:', e); toast.error('No se pudieron cargar los reportes'); setReportsLoading(false); }), []);
 
   const fetchBanners = useCallback(async () => {
     setBannersLoading(true);
@@ -344,7 +365,7 @@ const CEOPanel: React.FC = () => {
         setBannerSettings(s => ({ ...s, interval: cfg.interval ?? s.interval, quality: cfg.quality ?? s.quality }));
         setIsPlaying(cfg.autoplay ?? true);
       }
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error(e); toast.error('No se pudieron cargar los banners'); }
     finally { setBannersLoading(false); }
   }, []);
 
@@ -372,12 +393,18 @@ const CEOPanel: React.FC = () => {
 
   const getFieldError = (field: string) => formErrors.find(e => e.field === field)?.message;
 
+  // El registro de actividad es secundario: si falla, la acción ya se hizo y no
+  // debe mostrarse como error (antes "Error al eliminar tarea" con la tarea ya borrada).
+  const registrar = (action: string, details: Record<string, unknown>, fallbackName = '') =>
+    logActivity(action, details, userProfile?.uid || '', userProfile?.displayName || fallbackName)
+      .catch(e => console.warn('logActivity falló:', e));
+
   const handleCreateUser = async () => {
     if (!validateForm()) return;
     setIsCreatingUser(true); setCreateSuccess(null);
     try {
       await createUserWithRole(newUser.email, newUser.password, newUser.displayName, newUser.role);
-      await logActivity('USER_CREATED', { email: newUser.email, displayName: newUser.displayName, role: newUser.role }, userProfile?.uid || '', userProfile?.displayName || '');
+      await registrar('USER_CREATED', { email: newUser.email, displayName: newUser.displayName, role: newUser.role });
       setCreateSuccess(`✓ ${newUser.displayName} creado correctamente`);
       setTimeout(() => { setShowAddUser(false); setCreateSuccess(null); resetForm(); fetchData(); }, 1500);
     } catch (error: any) {
@@ -397,26 +424,48 @@ const CEOPanel: React.FC = () => {
     if (!confirm(`¿Eliminar a ${name || uid}?\n\nEsto borrará su cuenta completamente.`)) return;
     setIsDeletingUser(uid);
     try {
-      await deleteUserData(uid); await deleteAuthUser(uid);
-      await logActivity('USER_DELETED', { userId: uid, userName: name || uid }, userProfile?.uid || '', userProfile?.displayName || 'CEO');
-      await fetchData();
-    } catch (error: any) { alert(error.message || 'Error al eliminar usuario'); }
+      // Primero la cuenta de acceso (API del bot). Si eso falla, el perfil se
+      // queda: antes se borraba el perfil y el login seguía funcionando.
+      try { await deleteAuthUser(uid); }
+      catch (err) {
+        if (!esUsuarioInexistente(String(infoError(err).message ?? ''))) throw err;
+      }
+      await deleteUserData(uid);
+      await registrar('USER_DELETED', { userId: uid, userName: name || uid }, 'CEO');
+      toast.success(`${name || 'Usuario'} eliminado`);
+    } catch (err) {
+      const error = infoError(err);
+      toast.error(error.code === 'permission-denied'
+        ? 'No tienes permiso para eliminar este usuario'
+        : `No se pudo eliminar el usuario: ${error.message || 'error desconocido'}`);
+    }
     finally { setIsDeletingUser(null); }
   };
 
+  // Igual que Gestión de Roles: nadie cambia su propio rol, el rol CEO no se
+  // asigna desde aquí y el rol de otro CEO no se toca.
+  const puedeCambiarRol = (u: UserProfile) => u.uid !== userProfile?.uid && u.role !== 'CEO';
+
   const handleChangeRole = async (uid: string, newRole: UserRole) => {
+    const target = users.find(u => u.uid === uid);
+    if (uid === userProfile?.uid) { toast.error('No puedes cambiar tu propio rol'); return; }
+    if (target?.role === 'CEO')   { toast.error('No se puede cambiar el rol de un CEO'); return; }
+    if (newRole === 'CEO')        { toast.error('El rol CEO no se puede asignar desde aquí'); return; }
+    if (target?.role === newRole) return;
     try {
       await updateUserProfile(uid, { role: newRole });
-      await logActivity('ROLE_CHANGED', { userId: uid, newRole }, userProfile?.uid || '', userProfile?.displayName || '');
-      fetchData();
-    } catch { alert('Error al cambiar rol'); }
+      await registrar('ROLE_CHANGED', { userId: uid, newRole });
+      toast.success(`Rol actualizado a ${newRole}`);
+    } catch (err) {
+      toast.error(infoError(err).code === 'permission-denied' ? 'No tienes permiso para cambiar roles' : 'Error al cambiar el rol');
+    }
   };
 
   const handleCreateTask = async () => {
-    if (!newTask.title.trim()) { alert('El título es obligatorio'); return; }
-    if (assignMode === 'user' && !newTask.assignedTo) { alert('Selecciona un usuario'); return; }
-    if (assignMode === 'role' && !newTask.assignedToRole) { alert('Selecciona un rol'); return; }
-    if (!newTask.dueDate) { alert('La fecha límite es obligatoria'); return; }
+    if (!newTask.title.trim()) { toast.error('El título es obligatorio'); return; }
+    if (assignMode === 'user' && !newTask.assignedTo) { toast.error('Selecciona un usuario'); return; }
+    if (assignMode === 'role' && !newTask.assignedToRole) { toast.error('Selecciona un rol'); return; }
+    if (!newTask.dueDate) { toast.error('La fecha límite es obligatoria'); return; }
     try {
       await createTask({
         title: newTask.title, description: newTask.description, priority: newTask.priority,
@@ -426,30 +475,31 @@ const CEOPanel: React.FC = () => {
           ? { assignedTo: newTask.assignedTo, assignedToRole: null }
           : { assignedTo: null, assignedToRole: newTask.assignedToRole }),
       });
-      await logActivity('TASK_CREATED', { title: newTask.title }, userProfile?.uid || '', userProfile?.displayName || '');
+      await registrar('TASK_CREATED', { title: newTask.title });
       setNewTask({ title: '', description: '', assignedTo: '', assignedToRole: '', priority: 'medium', dueDate: '' });
       setShowAddTask(false);
-      fetchData();
-    } catch { alert('Error al crear tarea'); }
+      toast.success('Tarea creada');
+    } catch { toast.error('Error al crear la tarea'); }
   };
 
   const handleDeleteTask = async (taskId: string, title: string) => {
     if (!confirm(`¿Eliminar tarea "${title}"?`)) return;
     try {
       await deleteTask(taskId);
-      await logActivity('TASK_DELETED', { taskId, title }, userProfile?.uid || '', userProfile?.displayName || '');
-      fetchData();
-    } catch { alert('Error al eliminar tarea'); }
+      await registrar('TASK_DELETED', { taskId, title });
+      toast.success('Tarea eliminada');
+    } catch { toast.error('Error al eliminar la tarea'); }
   };
 
   const handleUpdateTask = async () => {
     if (!selectedTask) return;
+    if (!editTask.title?.trim()) { toast.error('El título es obligatorio'); return; }
     try {
-      const { doc: firestoreDoc, updateDoc } = await import('firebase/firestore');
       const updatePayload: any = {
-        title:       editTask.title,
+        title:       editTask.title.trim(),
         description: editTask.description,
         priority:    editTask.priority,
+        status:      editTask.status ?? selectedTask.status ?? 'pending',
       };
       if (editTask.dueDate) {
         updatePayload.date = Timestamp.fromDate(new Date(editTask.dueDate + 'T12:00:00'));
@@ -461,12 +511,12 @@ const CEOPanel: React.FC = () => {
         updatePayload.assignedTo     = null;
         updatePayload.assignedToRole = editTask.assignedToRole || null;
       }
-      await updateDoc(firestoreDoc(db, 'tasks', selectedTask.id), updatePayload);
-      await logActivity('TASK_UPDATED', { taskId: selectedTask.id, title: editTask.title }, userProfile?.uid || '', userProfile?.displayName || '');
+      await updateTask(selectedTask.id, updatePayload);
+      await registrar('TASK_UPDATED', { taskId: selectedTask.id, title: updatePayload.title });
       setSelectedTask((prev: any) => ({ ...prev, ...updatePayload }));
       setEditingTask(false);
-      fetchData();
-    } catch { alert('Error al actualizar la tarea'); }
+      toast.success('Tarea actualizada');
+    } catch { toast.error('Error al actualizar la tarea'); }
   };
 
   const handleDeleteReport = async (reportId: string, reportPath: string) => {
@@ -479,21 +529,22 @@ const CEOPanel: React.FC = () => {
         }
       }
       await deleteDoc(doc(db, 'taskReports', reportId));
-      await logActivity('REPORT_DELETED', { reportId }, userProfile?.uid || '', userProfile?.displayName || 'CEO');
-      fetchReports();
-    } catch (error) { console.error('Error deleting report:', error); alert('Error al eliminar el reporte'); }
+      await registrar('REPORT_DELETED', { reportId }, 'CEO');
+      toast.success('Reporte eliminado');
+    } catch (error) { console.error('Error deleting report:', error); toast.error('Error al eliminar el reporte'); }
   };
 
   const handleDownloadFile = async (url: string, filename: string) => {
     try {
       const response = await fetch(url);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const blob = await response.blob();
       const downloadUrl = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = downloadUrl; link.download = filename;
       document.body.appendChild(link); link.click(); link.remove();
       window.URL.revokeObjectURL(downloadUrl);
-    } catch (error) { console.error('Error downloading:', error); alert('Error al descargar el archivo'); }
+    } catch (error) { console.error('Error downloading:', error); toast.error('Error al descargar el archivo'); }
   };
 
   const handleSaveBanner = async () => {
@@ -503,15 +554,16 @@ const CEOPanel: React.FC = () => {
       await addDoc(collection(db, 'dashboard_banners'), { url: bannerForm.url, titulo: bannerForm.titulo, descripcion: bannerForm.descripcion, creadoEn: Timestamp.now() });
       setBannerForm({ url: '', titulo: '', descripcion: '' });
       setShowBannerModal(false);
+      toast.success('Banner publicado');
       fetchBanners();
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error(e); toast.error('No se pudo publicar el banner'); }
     finally { setSavingBanner(false); }
   };
 
   const handleDeleteBanner = async (id: string) => {
     if (!confirm('¿Eliminar este banner del dashboard?')) return;
-    try { await deleteDoc(doc(db, 'dashboard_banners', id)); setBannerActivo(0); fetchBanners(); }
-    catch (e) { console.error(e); }
+    try { await deleteDoc(doc(db, 'dashboard_banners', id)); setBannerActivo(0); toast.success('Banner eliminado'); fetchBanners(); }
+    catch (e) { console.error(e); toast.error('No se pudo eliminar el banner'); }
   };
 
   /* ── Derivados render ── */
@@ -566,28 +618,30 @@ const CEOPanel: React.FC = () => {
         /* ═══════════════════════════════════════════════
            ANIMACIONES PROFESIONALES — compatibles con
            cualquier tema (dark/light/system)
+           Los keyframes llevan prefijo "ceo": este <style> es
+           global mientras el panel está montado y pisaba los
+           "shimmer"/"slideUp" del layout y del aviso de updates.
            ═══════════════════════════════════════════════ */
 
-        @keyframes slideUp      { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
-        @keyframes fadeScale    { from{opacity:0;transform:scale(0.96)} to{opacity:1;transform:scale(1)} }
-        @keyframes progress     { from{transform:scaleX(0)} to{transform:scaleX(1)} }
-        @keyframes modalEnter   { from{opacity:0;transform:scale(0.94) translateY(12px)} to{opacity:1;transform:scale(1) translateY(0)} }
-        @keyframes modalOverlay { from{opacity:0} to{opacity:1} }
-        @keyframes listItemIn   { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
-        @keyframes shimmer      { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
-        @keyframes glowPulse    { 0%,100%{box-shadow:0 0 6px ${accent}40} 50%{box-shadow:0 0 18px ${accent}70} }
-        @keyframes countPop     { 0%{transform:scale(0.8);opacity:0} 80%{transform:scale(1.05)} 100%{transform:scale(1);opacity:1} }
-        @keyframes spinIn       { from{transform:rotate(-90deg);opacity:0} to{transform:rotate(0);opacity:1} }
-        @keyframes badgeBounce  { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-3px)} }
+        @keyframes ceoSlideUp      { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes ceoFadeScale    { from{opacity:0;transform:scale(0.96)} to{opacity:1;transform:scale(1)} }
+        @keyframes ceoProgress     { from{transform:scaleX(0)} to{transform:scaleX(1)} }
+        @keyframes ceoModalEnter   { from{opacity:0;transform:scale(0.94) translateY(12px)} to{opacity:1;transform:scale(1) translateY(0)} }
+        @keyframes ceoListItemIn   { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes ceoShimmer      { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
+        @keyframes ceoGlowPulse    { 0%,100%{box-shadow:0 0 6px ${accent}40} 50%{box-shadow:0 0 18px ${accent}70} }
+        @keyframes ceoCountPop     { 0%{transform:scale(0.8);opacity:0} 80%{transform:scale(1.05)} 100%{transform:scale(1);opacity:1} }
+        @keyframes ceoSpinIn       { from{transform:rotate(-90deg);opacity:0} to{transform:rotate(0);opacity:1} }
+        @keyframes ceoBadgeBounce  { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-3px)} }
 
-        .ceo-slide-up    { animation: slideUp   0.32s cubic-bezier(0.16,1,0.3,1) forwards; }
-        .ceo-fade-scale  { animation: fadeScale 0.24s cubic-bezier(0.16,1,0.3,1) forwards; }
-        .ceo-modal-enter { animation: modalEnter 0.28s cubic-bezier(0.16,1,0.3,1) forwards; }
+        .ceo-slide-up    { animation: ceoSlideUp   0.32s cubic-bezier(0.16,1,0.3,1) forwards; }
+        .ceo-fade-scale  { animation: ceoFadeScale 0.24s cubic-bezier(0.16,1,0.3,1) forwards; }
+        .ceo-modal-enter { animation: ceoModalEnter 0.28s cubic-bezier(0.16,1,0.3,1) forwards; }
 
         /* Stagger lists */
         .ceo-stagger > * {
           opacity: 0;
-          animation: listItemIn 0.35s cubic-bezier(0.16,1,0.3,1) forwards;
+          animation: ceoListItemIn 0.35s cubic-bezier(0.16,1,0.3,1) forwards;
         }
         .ceo-stagger > *:nth-child(1)  { animation-delay: 0ms; }
         .ceo-stagger > *:nth-child(2)  { animation-delay: 40ms; }
@@ -711,36 +765,28 @@ const CEOPanel: React.FC = () => {
         .ceo-tabs-list::-webkit-scrollbar { display: none; }
 
         /* ═══════════════════════════════════════════════
-           FIX RADIX UI: overlay + modal animado
-           Usamos backdrop-filter en el overlay pero
-           DEJAMOS que el contenido use las variables CSS
-           del tema (sin hardcodear colores).
+           RADIX UI — solo los menús de ESTE panel
+           Antes estas reglas iban sobre [role="listbox"],
+           [role="option"] y el wrapper de popper de toda la
+           app mientras el panel estaba montado. Ahora van
+           sobre la clase .ceo-listbox de los SelectContent
+           de aquí. (Las de [data-radix-dialog-*] se quitaron:
+           Radix no pone esos atributos, nunca aplicaban.)
            ═══════════════════════════════════════════════ */
-        [data-radix-dialog-overlay] {
-          background: rgba(0,0,0,0.75) !important;
-          backdrop-filter: blur(6px) saturate(1.2) !important;
-          -webkit-backdrop-filter: blur(6px) saturate(1.2) !important;
-          animation: modalOverlay 0.2s ease forwards;
-        }
-        [data-radix-dialog-content] {
-          /* NO hardcodeamos background aquí — respetamos las variables del tema */
-          box-shadow: 0 24px 48px rgba(0,0,0,0.5) !important;
-          animation: modalEnter 0.28s cubic-bezier(0.16,1,0.3,1) forwards;
-        }
-        [data-radix-popper-content-wrapper] {
+        [data-radix-popper-content-wrapper]:has(> .ceo-listbox) {
           z-index: 9999 !important;
         }
         /* El listbox SIEMPRE usa las variables del tema con fallback sólido */
-        [role="listbox"] {
+        .ceo-listbox[role="listbox"] {
           background: var(--dropdown-bg, #18181b) !important;
           border: 1px solid var(--border-main, #27272a) !important;
           box-shadow: 0 16px 40px rgba(0,0,0,0.4) !important;
         }
-        [role="option"] {
+        .ceo-listbox [role="option"] {
           transition: background 0.15s ease;
         }
-        [role="option"][data-state="checked"],
-        [role="option"]:hover {
+        .ceo-listbox [role="option"][data-state="checked"],
+        .ceo-listbox [role="option"]:hover {
           background: ${accent}15 !important;
         }
 
@@ -780,18 +826,18 @@ const CEOPanel: React.FC = () => {
         .ceo-skeleton {
           background: linear-gradient(90deg, var(--surface-hover,#1f1f23) 25%, var(--border-main,#27272a) 50%, var(--surface-hover,#1f1f23) 75%);
           background-size: 200% 100%;
-          animation: shimmer 1.5s infinite;
+          animation: ceoShimmer 1.5s infinite;
           border-radius: 8px;
         }
 
         /* Badge bounce */
         .ceo-badge-bounce {
-          animation: badgeBounce 2s ease-in-out infinite;
+          animation: ceoBadgeBounce 2s ease-in-out infinite;
         }
 
         /* Glow pulse */
         .ceo-glow-pulse {
-          animation: glowPulse 2s ease-in-out infinite;
+          animation: ceoGlowPulse 2s ease-in-out infinite;
         }
 
         /* Card lift */
@@ -813,12 +859,12 @@ const CEOPanel: React.FC = () => {
 
         /* Count animation */
         .ceo-count-pop {
-          animation: countPop 0.5s cubic-bezier(0.16,1,0.3,1) forwards;
+          animation: ceoCountPop 0.5s cubic-bezier(0.16,1,0.3,1) forwards;
         }
 
         /* Spinner elegant */
         .ceo-spin-elegant {
-          animation: spinIn 0.6s cubic-bezier(0.16,1,0.3,1) forwards;
+          animation: ceoSpinIn 0.6s cubic-bezier(0.16,1,0.3,1) forwards;
         }
       `}</style>
 
@@ -843,7 +889,7 @@ const CEOPanel: React.FC = () => {
             variant="outline" size="sm" disabled={refreshing}
             onClick={async () => {
               setRefreshing(true);
-              await Promise.all([fetchData(), fetchReports()]);
+              await Promise.all([fetchData(), fetchReports(), fetchBanners()]);
               setRefreshing(false);
             }}
             style={{ borderColor, background: 'transparent', color: textMuted }}
@@ -991,7 +1037,8 @@ const CEOPanel: React.FC = () => {
                           <div className="flex items-center gap-1">
                             {/* Cambiar rol en grid - mobile friendly */}
                             <button onClick={(e) => { e.stopPropagation(); setRoleChangeUser(user); setShowRoleModal(true); }}
-                              className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:bg-[var(--surface-hover)]"
+                              disabled={!puedeCambiarRol(user)}
+                              className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:bg-[var(--surface-hover)] disabled:opacity-40 disabled:pointer-events-none"
                               style={{ color: textMuted }} title="Cambiar rol">
                               <Shield className="w-3.5 h-3.5" />
                             </button>
@@ -1082,7 +1129,7 @@ const CEOPanel: React.FC = () => {
                             <Select
                               value={user.role}
                               onValueChange={(v: UserRole) => handleChangeRole(user.uid, v)}
-                              disabled={user.uid === userProfile?.uid}
+                              disabled={!puedeCambiarRol(user)}
                             >
                               <SelectTrigger
                                 className="w-36 font-extralight text-sm"
@@ -1095,14 +1142,15 @@ const CEOPanel: React.FC = () => {
                                 <SelectValue />
                               </SelectTrigger>
                               {/* FIX: fondo sólido en el dropdown */}
-                              <SelectContent
+                              <SelectContent className="ceo-listbox"
                                 style={{
                                   background: 'var(--dropdown-bg, #18181b)',
                                   border: `1px solid ${borderColor}`,
                                   zIndex: 9999,
                                 }}
                               >
-                                {ALL_ROLES_LIST.map(role => {
+                                {/* CEO solo aparece si ya es el rol del usuario (para que se vea en el trigger). */}
+                                {ALL_ROLES_LIST.filter(r => r !== 'CEO' || r === user.role).map(role => {
                                   const cfg = getRoleConfig(role, allRoles);
                                   return (
                                     <SelectItem key={role} value={role} className="font-extralight" style={{ color: textPrimary }}>
@@ -1120,7 +1168,7 @@ const CEOPanel: React.FC = () => {
                           {/* FIX: botón de rol en tablet/mobile (< lg) */}
                           <button
                             onClick={() => { setRoleChangeUser(user); setShowRoleModal(true); }}
-                            disabled={user.uid === userProfile?.uid}
+                            disabled={!puedeCambiarRol(user)}
                             className="lg:hidden w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-[var(--surface-hover)] disabled:opacity-40"
                             style={{ color: textMuted }}
                             title="Cambiar rol"
@@ -1163,7 +1211,7 @@ const CEOPanel: React.FC = () => {
                   </DialogDescription>
                 </DialogHeader>
                 <div className="grid grid-cols-1 gap-2 py-2">
-                  {ALL_ROLES_LIST.map(role => {
+                  {ASSIGNABLE_ROLES.map(role => {
                     const cfg = getRoleConfig(role, allRoles);
                     const isActive = roleChangeUser?.role === role;
                     return (
@@ -1267,8 +1315,8 @@ const CEOPanel: React.FC = () => {
                       <SelectTrigger className="font-extralight" style={{ background: surfaceSubtle, border: `1px solid ${borderColor}`, color: textPrimary }}>
                         <SelectValue />
                       </SelectTrigger>
-                      <SelectContent style={{ background: 'var(--dropdown-bg, #18181b)', border: `1px solid ${borderColor}`, zIndex: 9999 }}>
-                        {allRoles.map(role => (
+                      <SelectContent className="ceo-listbox" style={{ background: 'var(--dropdown-bg, #18181b)', border: `1px solid ${borderColor}`, zIndex: 9999 }}>
+                        {allRoles.filter(r => r !== 'CEO').map(role => (
                           <SelectItem key={role} value={role} className="font-extralight" style={{ color: textPrimary }}>{role}</SelectItem>
                         ))}
                       </SelectContent>
@@ -1349,7 +1397,7 @@ const CEOPanel: React.FC = () => {
                         <SelectTrigger style={{ background: surfaceSubtle, border: `1px solid ${borderColor}`, color: textPrimary }} className="font-extralight">
                           <SelectValue />
                         </SelectTrigger>
-                        <SelectContent style={{ background: 'var(--dropdown-bg, #18181b)', border: `1px solid ${borderColor}`, zIndex: 9999 }}>
+                        <SelectContent className="ceo-listbox" style={{ background: 'var(--dropdown-bg, #18181b)', border: `1px solid ${borderColor}`, zIndex: 9999 }}>
                           {Object.entries(PRIORITY_CONFIG).map(([k, cfg]) => (
                             <SelectItem key={k} value={k} className="font-extralight" style={{ color: textPrimary }}>
                               <span className="flex items-center gap-2">
@@ -1522,6 +1570,9 @@ const CEOPanel: React.FC = () => {
                               <span className={`inline-flex items-center gap-1 text-[10px] sm:text-xs font-extralight px-2 py-0.5 rounded-full border ${priCfg.bg} ${priCfg.color} ${priCfg.border}`}>
                                 <Flag className="w-2.5 h-2.5" /> {priCfg.label}
                               </span>
+                              <span className="text-[10px] sm:text-xs font-extralight" style={{ color: taskStatusCfg(task.status).color }}>
+                                {taskStatusCfg(task.status).label}
+                              </span>
                               {getAssignedLabel(task)}
                               {task.date && (
                                 <span className="inline-flex items-center gap-1 text-[10px] sm:text-xs font-extralight" style={{ color: textMuted }}>
@@ -1637,15 +1688,21 @@ const CEOPanel: React.FC = () => {
                           {/* Estado */}
                           <div className="rounded-xl p-3 border" style={{ background: surfaceSubtle, borderColor }}>
                             <p className="text-xs font-extralight uppercase tracking-wider mb-2" style={{ color: textMuted }}>Estado</p>
-                            <span className="text-xs font-extralight capitalize" style={{
-                              color: selectedTask.status === 'completed' ? '#34d399'
-                                : selectedTask.status === 'in-progress' ? '#60a5fa'
-                                : '#fb923c'
-                            }}>
-                              {selectedTask.status === 'completed' ? '✓ Completada'
-                                : selectedTask.status === 'in-progress' ? '⏳ En progreso'
-                                : '• Pendiente'}
-                            </span>
+                            {editingTask ? (
+                              <select
+                                value={editTask.status ?? 'pending'}
+                                onChange={e => setEditTask((p: any) => ({ ...p, status: e.target.value }))}
+                                className="text-xs font-extralight rounded-lg px-2 py-1 outline-none w-full"
+                                style={{ background: cardBg, color: textPrimary, border: `1px solid ${borderColor}` }}>
+                                <option value="pending">Pendiente</option>
+                                <option value="in-progress">En progreso</option>
+                                <option value="completed">Completada</option>
+                              </select>
+                            ) : (
+                              <span className="text-xs font-extralight capitalize" style={{ color: taskStatusCfg(selectedTask.status).color }}>
+                                {taskStatusCfg(selectedTask.status).label}
+                              </span>
+                            )}
                           </div>
 
                           {/* Fecha límite */}
@@ -1773,6 +1830,7 @@ const CEOPanel: React.FC = () => {
                                   title:          selectedTask.title       ?? '',
                                   description:    selectedTask.description ?? '',
                                   priority:       selectedTask.priority    ?? 'medium',
+                                  status:         selectedTask.status      ?? 'pending',
                                   dueDate:        toDateInputValue(selectedTask.date),
                                   assignedTo:     selectedTask.assignedTo     ?? '',
                                   assignedToRole: selectedTask.assignedToRole ?? '',
@@ -2111,7 +2169,7 @@ const CEOPanel: React.FC = () => {
                         await logActivity('BANNERS_CONFIG_SAVED', { interval: bannerSettings.interval, autoplay: isPlaying }, userProfile?.uid || '', userProfile?.displayName || 'CEO');
                       } catch (logError) { console.warn('logActivity falló:', logError); }
                       setSaveSuccessModal(true);
-                    } catch (error) { console.error('Error saving banners:', error); }
+                    } catch (error) { console.error('Error saving banners:', error); toast.error('No se pudieron guardar los banners'); }
                     finally { setSavingBanner(false); }
                   }}
                   disabled={savingBanner || banners.length === 0}
@@ -2123,7 +2181,7 @@ const CEOPanel: React.FC = () => {
                   <SelectTrigger className="w-20 font-extralight text-xs" style={{ background: surfaceSubtle, border: `1px solid ${borderColor}`, color: textPrimary }}>
                     <Clock className="w-3 h-3 mr-1" /><SelectValue />
                   </SelectTrigger>
-                  <SelectContent style={{ background: 'var(--dropdown-bg, #18181b)', border: `1px solid ${borderColor}`, zIndex: 9999 }}>
+                  <SelectContent className="ceo-listbox" style={{ background: 'var(--dropdown-bg, #18181b)', border: `1px solid ${borderColor}`, zIndex: 9999 }}>
                     {[['3000','3s'],['5000','5s'],['7000','7s'],['10000','10s']].map(([v,l]) => (
                       <SelectItem key={v} value={v} className="font-extralight text-xs" style={{ color: textPrimary }}>{l}</SelectItem>
                     ))}
@@ -2198,7 +2256,7 @@ const CEOPanel: React.FC = () => {
                     )}
                     {isPlaying && (
                       <div className="absolute top-0 left-0 right-0 h-0.5" style={{ background: 'rgba(255,255,255,0.1)' }}>
-                        <div className="h-full animate-[progress_5s_linear_infinite]"
+                        <div className="h-full animate-[ceoProgress_5s_linear_infinite]"
                           style={{ background: accent, animationDuration: `${bannerSettings.interval}ms`, transformOrigin: 'left' }} />
                       </div>
                     )}

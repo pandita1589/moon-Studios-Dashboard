@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { db } from '@/lib/firebase';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { db, subscribeToUsers } from '@/lib/firebase';
+import { supabase } from '@/lib/supabaseclient';
 import { leerCamposComunes, escribirCamposComunes } from '@/lib/devProjects';
 import {
-  collection, addDoc, deleteDoc, doc, onSnapshot,
+  collection, addDoc, deleteDoc, doc, onSnapshot, getDocs, where, writeBatch,
   query, orderBy, serverTimestamp, updateDoc,
 } from 'firebase/firestore';
 import { useAuth } from '@/contexts/AuthContext';
@@ -94,6 +95,23 @@ const TASK_STATUS = {
   review:      { label: 'En revisión', color: '#a78bfa', bg: 'rgba(167,139,250,0.1)' },
   done:        { label: 'Completado',  color: '#4ade80', bg: 'rgba(74,222,128,0.1)' },
 };
+
+// Las fechas 'yyyy-MM-dd' se guardan sin hora: new Date('2026-10-05') las toma
+// como medianoche UTC, que en Perú (UTC-5) cae el día anterior. Se leen a
+// mediodía local para que se vea el día que se eligió.
+const fechaLocal = (s?: string): Date | null => {
+  if (!s) return null;
+  const d = new Date(`${s.slice(0, 10)}T12:00:00`);
+  return isNaN(d.getTime()) ? null : d;
+};
+const fmtFecha = (s: string | undefined, patron: string) => {
+  const d = fechaLocal(s);
+  return d ? format(d, patron) : '';
+};
+
+// Campos que el panel Proyectos guarda en el mismo documento y aquí también se usan.
+type ProyectoDev = Project & { coverPath?: string };
+type UsuarioLite = { uid: string; displayName?: string; email?: string };
 
 const BD  = 'var(--border-main)';
 const SF  = 'var(--sidebar-card-bg)';
@@ -238,10 +256,57 @@ const BtnSave = React.memo<{ onClick: () => void; label: string; loadingLabel?: 
   )
 );
 
+// ─── Barra de progreso de un proyecto ────────────────────────────────────────
+// Controlada: muestra el valor en vivo de Firestore y solo usa un borrador
+// local mientras la mueves. Guarda al soltar (ratón o dedo), al soltar una
+// tecla y al perder el foco, así los cambios con teclado ya no se pierden.
+const ProgressSlider: React.FC<{
+  value: number; color: string;
+  onCommit: (v: number) => Promise<void>;
+}> = ({ value, color, onCommit }) => {
+  const [draft, setDraft] = useState<number | null>(null);
+  const enviando = useRef<number | null>(null);
+  const shown = draft ?? value;
+
+  const commit = (e: React.SyntheticEvent<HTMLInputElement>) => {
+    if (draft === null) return;                 // no la tocaste: no se escribe nada
+    const v = parseInt(e.currentTarget.value, 10);
+    if (v === value) { setDraft(null); return; }
+    if (enviando.current === v) return;         // pointerup + blur del mismo cambio
+    enviando.current = v;
+    void onCommit(v).finally(() => {
+      enviando.current = null;
+      // Si la seguiste moviendo mientras guardaba, conserva el borrador nuevo.
+      setDraft(d => (d === v ? null : d));
+    });
+  };
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between text-[10px] font-light" style={{ color: 'var(--text-muted)' }}>
+        <span>PROGRESO</span><span>{shown}%</span>
+      </div>
+      <input
+        type="range" min={0} max={100} step={5} value={shown}
+        onChange={e => setDraft(parseInt(e.target.value, 10))}
+        onPointerUp={commit}
+        onKeyUp={commit}
+        onBlur={commit}
+        className="w-full"
+        style={{ accentColor: color }}
+        aria-label="Progreso del proyecto"
+      />
+    </div>
+  );
+};
+
 // ─── Componente principal ────────────────────────────────────────────────────
 export default function PanelProgramacion() {
-  const { currentUser, userProfile, isAdmin, isCEO } = useAuth();
-  const canEdit = isAdmin || isCEO || userProfile?.role === 'Programación';
+  const { currentUser, userProfile, isAdmin } = useAuth();
+  // Reglas de Firestore: CEO/Administración/Programación escriben proyectos y
+  // tareas; solo CEO/Administración pueden borrarlos (isAdmin ya incluye al CEO).
+  const canEdit   = isAdmin || userProfile?.role === 'Programación';
+  const canDelete = isAdmin;
 
   const [projects,        setProjects]        = useState<Project[]>([]);
   const [changes,         setChanges]         = useState<VersionChange[]>([]);
@@ -258,6 +323,11 @@ export default function PanelProgramacion() {
   const [projectForm,    setProjectForm]    = useState<ProjectForm>(EMPTY_PROJECT);
   const [changeForm,     setChangeForm]     = useState<ChangeForm>(EMPTY_CHANGE);
   const [taskForm,       setTaskForm]       = useState<TaskForm>(EMPTY_TASK);
+  const [editTask,       setEditTask]       = useState<SprintTask | null>(null);
+  // Texto libre de etiquetas ("ui, bug"); se convierte a lista al guardar.
+  const [labelsText,     setLabelsText]     = useState('');
+  const [users,          setUsers]          = useState<UsuarioLite[]>([]);
+  const [loadError,      setLoadError]      = useState<string | null>(null);
   const [saving,         setSaving]         = useState(false);
   const [deleting,       setDeleting]       = useState<string | null>(null);
   const [toast,          setToast]          = useState<Toast>(null);
@@ -273,7 +343,12 @@ export default function PanelProgramacion() {
         return { ...r, ...leerCamposComunes(r), id: d.id, createdAt: r.createdAt?.toDate?.() ?? new Date() } as unknown as Project;
       }));
       setLoading(false);
-    }, () => setLoading(false));
+    }, err => {
+      // Sin esto el panel quedaba vacío como si no hubiera proyectos.
+      console.error('dev_projects:', err);
+      setLoadError('No se pudieron cargar los proyectos. Revisa tu conexión o tus permisos.');
+      setLoading(false);
+    });
     return () => unsub();
   }, []);
 
@@ -284,6 +359,9 @@ export default function PanelProgramacion() {
         const r = d.data();
         return { ...r, id: d.id, createdAt: r.createdAt?.toDate?.() ?? new Date() } as VersionChange;
       }));
+    }, err => {
+      console.error('dev_changelog:', err);
+      setLoadError('No se pudo cargar el changelog. Revisa tu conexión o tus permisos.');
     });
     return () => unsub();
   }, []);
@@ -292,9 +370,24 @@ export default function PanelProgramacion() {
     const q = query(collection(db, 'dev_tasks'), orderBy('createdAt', 'desc'));
     const unsub = onSnapshot(q, snap => {
       setTasks(snap.docs.map(d => ({ ...d.data(), id: d.id } as SprintTask)));
+    }, err => {
+      console.error('dev_tasks:', err);
+      setLoadError('No se pudieron cargar las tareas. Revisa tu conexión o tus permisos.');
     });
     return () => unsub();
   }, []);
+
+  // Usuarios para elegir el responsable de una tarea (se guarda su uid).
+  useEffect(() => subscribeToUsers(
+    u => setUsers(u as UsuarioLite[]),
+    err => console.error('users:', err),
+  ), []);
+
+  const userName = useCallback((uid?: string) => {
+    if (!uid) return '';
+    const u = users.find(x => x.uid === uid);
+    return u?.displayName || u?.email || '';
+  }, [users]);
 
   const showToast = useCallback((type: 'success' | 'error', msg: string) => {
     setToast({ type, msg });
@@ -310,11 +403,11 @@ export default function PanelProgramacion() {
         description: project.description ?? '',
         status: project.status as ProjectStatus,
         version: project.version,
-        repository: (project as any).repository ?? '',
+        repository: project.repository ?? '',
         stack: project.stack ?? [],
-        priority: (project as any).priority ?? 'medium',
-        deadline: (project as any).deadline ?? '',
-        progress: (project as any).progress ?? 0,
+        priority: project.priority ?? 'medium',
+        deadline: project.deadline ?? '',
+        progress: project.progress ?? 0,
       });
     } else {
       setEditProject(null);
@@ -328,14 +421,32 @@ export default function PanelProgramacion() {
     setActiveModal('change');
   }, []);
 
-  const openTaskModal = useCallback(() => {
-    setTaskForm(EMPTY_TASK);
+  // Sin tarea: crear. Con tarea: el mismo modal sirve para editarla.
+  const openTaskModal = useCallback((task?: SprintTask) => {
+    if (task) {
+      setEditTask(task);
+      setTaskForm({
+        projectId:   task.projectId,
+        title:       task.title,
+        description: task.description ?? '',
+        priority:    task.priority ?? 'medium',
+        assignee:    task.assignee ?? '',
+        dueDate:     task.dueDate ?? '',
+        labels:      task.labels ?? [],
+      });
+      setLabelsText((task.labels ?? []).join(', '));
+    } else {
+      setEditTask(null);
+      setTaskForm(EMPTY_TASK);
+      setLabelsText('');
+    }
     setActiveModal('task');
   }, []);
 
   const closeModal = useCallback(() => {
     setActiveModal(null);
     setEditProject(null);
+    setEditTask(null);
   }, []);
 
   // ─── Handlers CRUD ───────────────────────────────────────────────────────
@@ -387,36 +498,87 @@ export default function PanelProgramacion() {
     if (!taskForm.projectId || !taskForm.title.trim()) {
       showToast('error', 'Proyecto y título requeridos'); return;
     }
+    const labels = Array.from(new Set(
+      labelsText.split(',').map(l => l.trim()).filter(Boolean),
+    ));
+    const datos = {
+      projectId:   taskForm.projectId,
+      title:       taskForm.title.trim(),
+      description: taskForm.description.trim(),
+      priority:    taskForm.priority,
+      assignee:    taskForm.assignee,
+      dueDate:     taskForm.dueDate,
+      labels,
+    };
     setSaving(true);
     try {
-      await addDoc(collection(db, 'dev_tasks'), {
-        ...taskForm,
-        status: 'todo',
-        author: currentUser?.uid,
-        authorName: userProfile?.displayName,
-        createdAt: serverTimestamp(),
-      });
-      showToast('success', 'Tarea creada');
+      if (editTask) {
+        // Editar no toca estado, autor ni fecha de creación.
+        await updateDoc(doc(db, 'dev_tasks', editTask.id), { ...datos, updatedAt: serverTimestamp() });
+        showToast('success', 'Tarea actualizada');
+      } else {
+        await addDoc(collection(db, 'dev_tasks'), {
+          ...datos,
+          status: 'todo',
+          author: currentUser?.uid,
+          authorName: userProfile?.displayName,
+          createdAt: serverTimestamp(),
+        });
+        showToast('success', 'Tarea creada');
+      }
       closeModal();
     } catch (err: any) { showToast('error', err.message); }
     finally { setSaving(false); }
-  }, [taskForm, currentUser, userProfile, showToast, closeModal]);
+  }, [taskForm, labelsText, editTask, currentUser, userProfile, showToast, closeModal]);
 
   const handleMoveTask = useCallback(async (taskId: string, newStatus: SprintTask['status']) => {
+    // Soltar en la misma columna no es un cambio.
+    if (tasks.find(t => t.id === taskId)?.status === newStatus) return;
     try {
       await updateDoc(doc(db, 'dev_tasks', taskId), { status: newStatus, updatedAt: serverTimestamp() });
     } catch { showToast('error', 'Error moviendo tarea'); }
-  }, [showToast]);
+  }, [tasks, showToast]);
 
-  const handleDeleteProject = useCallback(async (id: string, name: string) => {
-    if (!confirm(`¿Eliminar "${name}"?`)) return;
-    setDeleting(id);
+  const handleDeleteProject = useCallback(async (p: ProyectoDev) => {
+    if (!confirm(`¿Eliminar "${p.name}"? También se eliminarán sus tareas.`)) return;
+    setDeleting(p.id);
     try {
-      await deleteDoc(doc(db, 'dev_projects', id));
-      showToast('success', 'Proyecto eliminado');
-    } catch (err: any) { showToast('error', err.message); }
-    finally { setDeleting(null); }
-  }, [showToast]);
+      await deleteDoc(doc(db, 'dev_projects', p.id));
+    } catch (err) {
+      showToast('error', err instanceof Error ? err.message : 'No se pudo eliminar el proyecto');
+      setDeleting(null);
+      return;
+    }
+    // Lo demás va después: si el proyecto no se pudo borrar, sus tareas y su
+    // portada se quedan. Antes quedaban huérfanas para siempre.
+    const avisos: string[] = [];
+    try {
+      const snap = await getDocs(query(collection(db, 'dev_tasks'), where('projectId', '==', p.id)));
+      // Un batch admite 500 escrituras.
+      for (let i = 0; i < snap.docs.length; i += 450) {
+        const batch = writeBatch(db);
+        snap.docs.slice(i, i + 450).forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
+    } catch (err) {
+      console.error('Borrando tareas del proyecto:', err);
+      avisos.push('sus tareas');
+    }
+    if (p.coverPath) {
+      // Misma limpieza que hace el panel Proyectos (bucket 'project-covers').
+      try {
+        const { error } = await supabase.storage.from('project-covers').remove([p.coverPath.split('?')[0]]);
+        if (error) throw error;
+      } catch (err) {
+        console.warn('No se pudo eliminar la portada:', err);
+        avisos.push('su portada');
+      }
+    }
+    if (avisos.length) showToast('error', `Proyecto eliminado, pero no se pudo borrar ${avisos.join(' ni ')}`);
+    else showToast('success', 'Proyecto eliminado');
+    if (expandedProject === p.id) setExpandedProject(null);
+    setDeleting(null);
+  }, [showToast, expandedProject]);
 
   const handleDeleteTask = useCallback(async (id: string) => {
     if (!confirm('¿Eliminar esta tarea?')) return;
@@ -429,8 +591,11 @@ export default function PanelProgramacion() {
   const handleUpdateProgress = useCallback(async (id: string, progress: number) => {
     try {
       await updateDoc(doc(db, 'dev_projects', id), { progress, updatedAt: serverTimestamp() });
-    } catch {}
-  }, []);
+    } catch (err) {
+      // Antes el error se tragaba y la barra quedaba en un valor que no se guardó.
+      showToast('error', `No se pudo guardar el progreso: ${err instanceof Error ? err.message : 'error desconocido'}`);
+    }
+  }, [showToast]);
 
   // ─── Derivados memorizados ────────────────────────────────────────────────
   const filteredProjects = useMemo(() => projects.filter(p => {
@@ -468,7 +633,7 @@ export default function PanelProgramacion() {
     totalTasks:     tasks.length,
     doneTasks:      tasks.filter(t => t.status === 'done').length,
     avgProgress:    projects.length
-      ? Math.round(projects.reduce((a, p) => a + ((p as any).progress ?? 0), 0) / projects.length)
+      ? Math.round(projects.reduce((a, p) => a + (p.progress ?? 0), 0) / projects.length)
       : 0,
   }), [projects, tasks]);
 
@@ -483,6 +648,20 @@ export default function PanelProgramacion() {
     [{ value: '', label: 'Seleccionar proyecto...' }, ...projects.map(p => ({ value: p.id, label: p.version ? `${p.name} (v${p.version})` : p.name }))],
     [projects]
   );
+
+  const assigneeOptions = useMemo(() => {
+    const opts = [
+      { value: '', label: 'Sin asignar' },
+      ...users
+        .map(u => ({ value: u.uid, label: u.displayName || u.email || u.uid }))
+        .sort((a, b) => a.label.localeCompare(b.label, 'es')),
+    ];
+    // Si el responsable ya no está en la lista, que no desaparezca del select.
+    if (taskForm.assignee && !opts.some(o => o.value === taskForm.assignee)) {
+      opts.push({ value: taskForm.assignee, label: 'Usuario no encontrado' });
+    }
+    return opts;
+  }, [users, taskForm.assignee]);
 
   const TABS: { id: Tab; label: string; icon: React.FC<any>; badge?: number }[] = useMemo(() => [
     { id: 'overview',  label: 'Overview',  icon: BarChart3 },
@@ -555,7 +734,7 @@ export default function PanelProgramacion() {
               style={{ ...inputStyle, resize: 'none' } as React.CSSProperties}
             />
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <SelectField label="Estado" value={projectForm.status}
               onChange={v => setProjectForm(p => ({ ...p, status: v as ProjectStatus }))}
               options={Object.entries(STATUS_META).map(([k, v]) => ({ value: k, label: v.label, color: v.color }))} />
@@ -563,7 +742,7 @@ export default function PanelProgramacion() {
               onChange={v => setProjectForm(p => ({ ...p, priority: v }))}
               options={Object.entries(PRIORITY_META).map(([k, v]) => ({ value: k, label: v.label, color: v.color }))} />
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input label="Versión inicial" value={projectForm.version}
               onChange={e => setProjectForm(p => ({ ...p, version: e.target.value }))}
               placeholder="0.1.0" />
@@ -626,7 +805,7 @@ export default function PanelProgramacion() {
           <SelectField label="Proyecto *" value={changeForm.projectId}
             onChange={v => setChangeForm(p => ({ ...p, projectId: v }))}
             options={projectOptionsWithVersion} />
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input label="Nueva versión *" value={changeForm.version}
               onChange={e => setChangeForm(p => ({ ...p, version: e.target.value }))}
               placeholder="1.2.0" />
@@ -666,12 +845,12 @@ export default function PanelProgramacion() {
       {/* Modal: Tarea */}
       {activeModal === 'task' && (
         <ModalWrapper
-          title="Nueva tarea"
+          title={editTask ? 'Editar tarea' : 'Nueva tarea'}
           onClose={closeModal}
           footer={
             <>
               <BtnCancel onClick={closeModal} saving={saving} />
-              <BtnSave onClick={handleSaveTask} label="Crear tarea" saving={saving} />
+              <BtnSave onClick={handleSaveTask} label={editTask ? 'Guardar cambios' : 'Crear tarea'} saving={saving} />
             </>
           }
         >
@@ -691,13 +870,19 @@ export default function PanelProgramacion() {
               style={{ ...inputStyle, resize: 'none' } as React.CSSProperties}
             />
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <SelectField label="Prioridad" value={taskForm.priority}
               onChange={v => setTaskForm(p => ({ ...p, priority: v }))}
               options={Object.entries(PRIORITY_META).map(([k, v]) => ({ value: k, label: v.label, color: v.color }))} />
             <Input label="Fecha límite" type="date" value={taskForm.dueDate}
               onChange={e => setTaskForm(p => ({ ...p, dueDate: e.target.value }))} />
           </div>
+          <SelectField label="Responsable" value={taskForm.assignee}
+            onChange={v => setTaskForm(p => ({ ...p, assignee: v }))}
+            options={assigneeOptions} />
+          <Input label="Etiquetas" value={labelsText}
+            onChange={e => setLabelsText(e.target.value)}
+            placeholder="Separadas por comas: ui, bug, backend" />
         </ModalWrapper>
       )}
 
@@ -720,7 +905,7 @@ export default function PanelProgramacion() {
         {canEdit && (
           <div className="flex items-center gap-2 flex-wrap">
             <button
-              onClick={openTaskModal}
+              onClick={() => openTaskModal()}
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-light transition-opacity hover:opacity-80"
               style={{ background: 'var(--sidebar-card-bg)', border: `1px solid ${BD}`, color: 'var(--text-primary)' }}
             >
@@ -743,6 +928,16 @@ export default function PanelProgramacion() {
           </div>
         )}
       </div>
+
+      {loadError && (
+        <div
+          className="flex items-center gap-2 px-4 py-3 rounded-2xl text-sm font-light"
+          style={{ background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)', color: '#f87171' }}
+        >
+          <AlertCircle className="w-4 h-4 flex-shrink-0" strokeWidth={1.5} />
+          <span>{loadError}</span>
+        </div>
+      )}
 
       {/* ══ Tabs ════════════════════════════════════════════════════════════ */}
       <div
@@ -810,7 +1005,7 @@ export default function PanelProgramacion() {
               </div>
               <div className="divide-y" style={{ borderColor: BD }}>
                 {projects.filter(p => p.status === 'active').slice(0, 5).map(p => {
-                  const progress = (p as any).progress ?? 0;
+                  const progress = p.progress ?? 0;
                   const ptasks   = projectTasks(p.id);
                   const done     = ptasks.filter(t => t.status === 'done').length;
                   return (
@@ -857,9 +1052,9 @@ export default function PanelProgramacion() {
                         <div className="flex items-center gap-2 mt-0.5 text-[10px] font-light" style={{ color: 'var(--text-muted)' }}>
                           <span>{project?.name ?? '—'}</span>
                           <span>·</span>
-                          <span>v{(c as any).version}</span>
+                          <span>v{c.version}</span>
                           <span>·</span>
-                          <span>{(c as any).authorName ?? '—'}</span>
+                          <span>{c.authorName ?? '—'}</span>
                         </div>
                       </div>
                       <span className="text-[10px] font-light flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
@@ -928,7 +1123,7 @@ export default function PanelProgramacion() {
                 return (
                   <button
                     key={s}
-                    onClick={() => setFilterStatus(s as any)}
+                    onClick={() => setFilterStatus(s as ProjectStatus | 'all')}
                     className="px-2.5 py-1.5 rounded-xl text-xs font-light transition-all"
                     style={{
                       background: active ? (s !== 'all' ? STATUS_META[s as ProjectStatus]?.color + '18' : 'var(--border-main)') : 'var(--sidebar-card-bg)',
@@ -953,11 +1148,11 @@ export default function PanelProgramacion() {
             <div className="space-y-2">
               {filteredProjects.map(p => {
                 const sm       = STATUS_META[p.status as ProjectStatus] ?? STATUS_META.planning;
-                const pm       = PRIORITY_META[(p as any).priority ?? 'medium'];
+                const pm       = PRIORITY_META[p.priority ?? 'medium'];
                 const ptasks   = projectTasks(p.id);
                 const done     = ptasks.filter(t => t.status === 'done').length;
                 const pchange  = changes.filter(c => c.projectId === p.id).length;
-                const progress = (p as any).progress ?? 0;
+                const progress = p.progress ?? 0;
                 const isExp    = expandedProject === p.id;
 
                 return (
@@ -1009,23 +1204,26 @@ export default function PanelProgramacion() {
                           >
                             <Edit3 className="w-3 h-3" strokeWidth={1.5} />
                           </button>
-                          {(p as any).repository && (
-                            <a href={(p as any).repository} target="_blank" rel="noreferrer"
+                          {p.repository && (
+                            <a href={p.repository} target="_blank" rel="noreferrer"
                               className="w-7 h-7 rounded-lg flex items-center justify-center transition-all hover:opacity-70"
                               style={{ color: 'var(--text-muted)' }}>
                               <ExternalLink className="w-3 h-3" strokeWidth={1.5} />
                             </a>
                           )}
-                          <button
-                            onClick={() => handleDeleteProject(p.id, p.name)}
-                            disabled={deleting === p.id}
-                            className="w-7 h-7 rounded-lg flex items-center justify-center transition-all hover:opacity-70"
-                            style={{ color: 'var(--text-muted)' }}
-                          >
-                            {deleting === p.id
-                              ? <RefreshCw className="w-3 h-3 animate-spin" strokeWidth={1.5} />
-                              : <Trash2 className="w-3 h-3" strokeWidth={1.5} />}
-                          </button>
+                          {/* Las reglas solo dejan borrar a CEO/Administración. */}
+                          {canDelete && (
+                            <button
+                              onClick={() => handleDeleteProject(p)}
+                              disabled={deleting === p.id}
+                              className="w-7 h-7 rounded-lg flex items-center justify-center transition-all hover:opacity-70"
+                              style={{ color: 'var(--text-muted)' }}
+                            >
+                              {deleting === p.id
+                                ? <RefreshCw className="w-3 h-3 animate-spin" strokeWidth={1.5} />
+                                : <Trash2 className="w-3 h-3" strokeWidth={1.5} />}
+                            </button>
+                          )}
                         </div>
                       )}
                       <ChevronDown
@@ -1043,8 +1241,8 @@ export default function PanelProgramacion() {
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs font-light">
                           {[
                             { label: 'Stack',    value: p.stack?.join(', ') || '—' },
-                            { label: 'Lead',     value: (p as any).leadName ?? '—' },
-                            { label: 'Deadline', value: (p as any).deadline ? format(new Date((p as any).deadline), 'dd/MM/yyyy') : '—' },
+                            { label: 'Lead',     value: p.leadName ?? '—' },
+                            { label: 'Deadline', value: fmtFecha(p.deadline, 'dd/MM/yyyy') || '—' },
                             { label: 'Creado',   value: format(p.createdAt instanceof Date ? p.createdAt : new Date(), 'dd/MM/yyyy') },
                           ].map(({ label, value }) => (
                             <div key={label}>
@@ -1054,18 +1252,11 @@ export default function PanelProgramacion() {
                           ))}
                         </div>
                         {canEdit && (
-                          <div className="space-y-1">
-                            <div className="flex items-center justify-between text-[10px] font-light" style={{ color: 'var(--text-muted)' }}>
-                              <span>PROGRESO</span><span>{progress}%</span>
-                            </div>
-                            <input
-                              type="range" min={0} max={100} step={5} defaultValue={progress}
-                              onMouseUp={e => handleUpdateProgress(p.id, parseInt((e.target as HTMLInputElement).value))}
-                              onTouchEnd={e => handleUpdateProgress(p.id, parseInt((e.target as HTMLInputElement).value))}
-                              className="w-full"
-                              style={{ accentColor: sm.color }}
-                            />
-                          </div>
+                          <ProgressSlider
+                            value={progress}
+                            color={sm.color}
+                            onCommit={v => handleUpdateProgress(p.id, v)}
+                          />
                         )}
                         {ptasks.length > 0 && (
                           <div>
@@ -1115,7 +1306,7 @@ export default function PanelProgramacion() {
             </div>
             {canEdit && (
               <button
-                onClick={openTaskModal}
+                onClick={() => openTaskModal()}
                 className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-light ml-auto"
                 style={{ background: 'var(--text-primary)', color: 'var(--bg-sidebar)' }}
               >
@@ -1126,7 +1317,7 @@ export default function PanelProgramacion() {
 
           {/* Kanban */}
           <div className="flex gap-3 overflow-x-auto pb-2" style={{ WebkitOverflowScrolling: 'touch' }}>
-            {(Object.entries(TASK_STATUS) as [SprintTask['status'], any][]).map(([status, meta]) => {
+            {(Object.entries(TASK_STATUS) as [SprintTask['status'], typeof TASK_STATUS[keyof typeof TASK_STATUS]][]).map(([status, meta]) => {
               const colTasks = tasksByStatus(status);
               return (
                 <div
@@ -1134,7 +1325,7 @@ export default function PanelProgramacion() {
                   className="rounded-2xl overflow-hidden flex-shrink-0"
                   style={{ border: `1px solid ${BD}`, background: 'var(--sidebar-card-bg)', width: 220, minWidth: 200 }}
                   onDragOver={e => { e.preventDefault(); }}
-                  onDrop={e => { e.preventDefault(); if (dragTask) handleMoveTask(dragTask, status); setDragTask(null); }}
+                  onDrop={e => { e.preventDefault(); if (dragTask && canEdit) handleMoveTask(dragTask, status); setDragTask(null); }}
                 >
                   <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: `1px solid ${BD}` }}>
                     <div className="flex items-center gap-2">
@@ -1150,22 +1341,38 @@ export default function PanelProgramacion() {
                       return (
                         <div
                           key={t.id}
-                          draggable
+                          draggable={canEdit}
                           onDragStart={() => setDragTask(t.id)}
                           onDragEnd={() => setDragTask(null)}
-                          className="rounded-xl p-3 cursor-grab active:cursor-grabbing group"
+                          className={`rounded-xl p-3 group ${canEdit ? 'cursor-grab active:cursor-grabbing' : ''}`}
                           style={{ background: 'var(--sidebar-bg, var(--sidebar-card-bg))', border: `1px solid ${BD}` }}
                         >
                           <div className="flex items-start justify-between gap-2 mb-2">
                             <p className="text-xs font-light leading-relaxed flex-1" style={{ color: 'var(--text-primary)' }}>{t.title}</p>
+                            {/* Siempre visibles: con hover no había forma de borrar en pantallas táctiles. */}
                             {canEdit && (
-                              <button
-                                onClick={() => handleDeleteTask(t.id)}
-                                className="w-5 h-5 rounded-md opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all"
-                                style={{ color: 'var(--text-muted)' }}
-                              >
-                                <X className="w-3 h-3" strokeWidth={1.5} />
-                              </button>
+                              <div className="flex items-center gap-0.5 flex-shrink-0">
+                                <button
+                                  onClick={() => openTaskModal(t)}
+                                  title="Editar tarea"
+                                  aria-label="Editar tarea"
+                                  className="w-5 h-5 rounded-md flex items-center justify-center transition-all hover:opacity-70"
+                                  style={{ color: 'var(--text-muted)' }}
+                                >
+                                  <Edit3 className="w-3 h-3" strokeWidth={1.5} />
+                                </button>
+                                {canDelete && (
+                                  <button
+                                    onClick={() => handleDeleteTask(t.id)}
+                                    title="Eliminar tarea"
+                                    aria-label="Eliminar tarea"
+                                    className="w-5 h-5 rounded-md flex items-center justify-center transition-all hover:opacity-70"
+                                    style={{ color: 'var(--text-muted)' }}
+                                  >
+                                    <X className="w-3 h-3" strokeWidth={1.5} />
+                                  </button>
+                                )}
+                              </div>
                             )}
                           </div>
                           <div className="flex items-center gap-2 flex-wrap">
@@ -1173,8 +1380,30 @@ export default function PanelProgramacion() {
                               {pm.label}
                             </span>
                             {proj && <span className="text-[10px] font-light" style={{ color: 'var(--text-muted)' }}>{proj.name}</span>}
-                            {t.dueDate && <span className="text-[10px] font-light" style={{ color: 'var(--text-muted)' }}>{format(new Date(t.dueDate), 'dd/MM')}</span>}
+                            {t.dueDate && <span className="text-[10px] font-light" style={{ color: 'var(--text-muted)' }}>{fmtFecha(t.dueDate, 'dd/MM')}</span>}
+                            {t.assignee && userName(t.assignee) && (
+                              <span className="text-[10px] font-light" style={{ color: 'var(--text-muted)' }}>· {userName(t.assignee)}</span>
+                            )}
+                            {(t.labels ?? []).map(l => (
+                              <span key={l} className="text-[10px] font-light px-1.5 py-0.5 rounded-md" style={{ color: 'var(--text-muted)', border: `1px solid ${BD}` }}>
+                                {l}
+                              </span>
+                            ))}
                           </div>
+                          {/* Mover sin arrastrar: el drag de HTML5 no funciona con el dedo. */}
+                          {canEdit && (
+                            <select
+                              value={t.status}
+                              onChange={e => handleMoveTask(t.id, e.target.value as SprintTask['status'])}
+                              aria-label="Cambiar estado de la tarea"
+                              className="mt-2 w-full text-[10px] font-light rounded-md px-1.5 py-1 outline-none cursor-pointer"
+                              style={{ background: 'var(--sidebar-card-bg)', border: `1px solid ${BD}`, color: TASK_STATUS[t.status]?.color ?? 'var(--text-muted)' }}
+                            >
+                              {(Object.entries(TASK_STATUS) as [SprintTask['status'], { label: string }][]).map(([k, v]) => (
+                                <option key={k} value={k} style={{ background: 'var(--sidebar-card-bg)', color: 'var(--text-primary)' }}>{v.label}</option>
+                              ))}
+                            </select>
+                          )}
                         </div>
                       );
                     })}
@@ -1243,20 +1472,20 @@ export default function PanelProgramacion() {
                               style={{ color: meta.color, background: meta.color + '18', border: `1px solid ${meta.color}30` }}>
                               {meta.label}
                             </span>
-                            {(c as any).breaking && (
+                            {c.breaking && (
                               <span className="text-[10px] font-light px-1.5 py-0.5 rounded-md bg-red-500/10 text-red-400">breaking</span>
                             )}
                           </div>
                           <div className="text-right flex-shrink-0">
-                            <p className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>v{(c as any).version}</p>
+                            <p className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>v{c.version}</p>
                             <p className="text-[10px] font-light" style={{ color: 'var(--text-muted)' }}>{proj?.name}</p>
                           </div>
                         </div>
-                        {(c as any).description && (
-                          <p className="text-xs font-light leading-relaxed mb-2" style={{ color: 'var(--text-muted)' }}>{(c as any).description}</p>
+                        {c.description && (
+                          <p className="text-xs font-light leading-relaxed mb-2" style={{ color: 'var(--text-muted)' }}>{c.description}</p>
                         )}
                         <div className="flex items-center gap-3 text-[10px] font-light" style={{ color: 'var(--text-muted)' }}>
-                          <span>{(c as any).authorName ?? '—'}</span>
+                          <span>{c.authorName ?? '—'}</span>
                           <span>·</span>
                           <span>{format(c.createdAt instanceof Date ? c.createdAt : new Date(), 'dd MMM yyyy, HH:mm', { locale: es })}</span>
                         </div>
@@ -1330,7 +1559,7 @@ export default function PanelProgramacion() {
               <div className="space-y-4">
                 {projects.map(p => {
                   const sm     = STATUS_META[p.status as ProjectStatus] ?? STATUS_META.planning;
-                  const prog   = (p as any).progress ?? 0;
+                  const prog   = p.progress ?? 0;
                   const ptasks = projectTasks(p.id);
                   const done   = ptasks.filter(t => t.status === 'done').length;
                   return (

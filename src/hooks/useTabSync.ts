@@ -11,8 +11,14 @@
 //   5. La pestaña que recibe "TAB_TAKEOVER" cierra su sesión local (no Firebase)
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { auth } from '@/lib/firebase';
 
-const CHANNEL_NAME = 'moon_tab_sync';
+// El canal va por usuario: con un nombre global, dos cuentas distintas en dos
+// pestañas se "desplazaban" entre sí aunque no compartieran sesión.
+const CHANNEL_PREFIX = 'moon_tab_sync';
+
+// Un id por pestaña (el módulo se carga una vez por pestaña).
+const TAB_ID = Math.random().toString(36).slice(2);
 
 export type TabChoice = 'stay' | 'switch' | null;
 
@@ -22,19 +28,23 @@ interface UseTabSyncResult {
   handleGoToOther: () => void;
 }
 
-export function useTabSync(isAuthenticated: boolean): UseTabSyncResult {
+// `uid` es opcional para no romper la llamada existente: si no llega, se toma
+// del usuario de Firebase con sesión abierta.
+export function useTabSync(isAuthenticated: boolean, uid?: string): UseTabSyncResult {
   const [showModal, setShowModal] = useState(false);
   const channelRef  = useRef<BroadcastChannel | null>(null);
-  const tabIdRef    = useRef<string>(Math.random().toString(36).slice(2));
   const ackReceivedRef = useRef(false);
+  const uidActual = uid ?? auth.currentUser?.uid ?? '';
 
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || !uidActual) return;
     if (!('BroadcastChannel' in window)) return;
 
-    const channel = new BroadcastChannel(CHANNEL_NAME);
+    const channel = new BroadcastChannel(`${CHANNEL_PREFIX}_${uidActual}`);
     channelRef.current = channel;
-    const myId = tabIdRef.current;
+    const myId = TAB_ID;
+    // Al cambiar de cuenta se vuelve a negociar desde cero.
+    ackReceivedRef.current = false;
 
     const handler = (e: MessageEvent) => {
       const { type, from } = e.data ?? {};
@@ -74,12 +84,13 @@ export function useTabSync(isAuthenticated: boolean): UseTabSyncResult {
       clearTimeout(timeout);
       channel.removeEventListener('message', handler);
       channel.close();
+      if (channelRef.current === channel) channelRef.current = null;
     };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, uidActual]);
 
   const handleStayHere = useCallback(() => {
     // Esta pestaña toma el control — le avisa a las otras que se retiren
-    channelRef.current?.postMessage({ type: 'TAB_TAKEOVER', from: tabIdRef.current });
+    channelRef.current?.postMessage({ type: 'TAB_TAKEOVER', from: TAB_ID });
     setShowModal(false);
   }, []);
 

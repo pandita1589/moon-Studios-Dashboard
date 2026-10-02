@@ -17,11 +17,12 @@
  */
 
 import {
-  collection, addDoc, updateDoc, deleteDoc, getDocs,
+  collection, addDoc, updateDoc, deleteDoc, getDocs, getDoc,
   doc, query, where, orderBy, serverTimestamp, Timestamp,
   type QueryDocumentSnapshot, type DocumentData,
 } from 'firebase/firestore';
-import { db } from './firebase'; // ajusta al path real de tu firebase.ts
+import { db } from '@/lib/firebase';
+import { supabase, REPORTS_BUCKET, deleteReportFile } from '@/lib/supabaseclient';
 
 export type ReportStatus = 'completed' | 'not-completed' | 'in-progress';
 
@@ -99,9 +100,36 @@ export async function updateTaskReport(
   await updateDoc(doc(db, COL, reportId), { ...data, updatedAt: serverTimestamp() });
 }
 
-/** Elimina un reporte. */
+/**
+ * Elimina un reporte y, después, sus adjuntos en Supabase.
+ * Primero el documento: si eso falla, los archivos siguen disponibles para el
+ * reporte. La limpieza del almacenamiento es best effort y nunca hace fallar
+ * el borrado (como en CEOPanel: se vacía la carpeta {taskId}/{reportedBy}).
+ */
 export async function deleteTaskReport(reportId: string) {
-  await deleteDoc(doc(db, COL, reportId));
+  const ref  = doc(db, COL, reportId);
+  const snap = await getDoc(ref).catch(() => null);
+  const data = snap?.exists() ? snap.data() : null;
+  await deleteDoc(ref);
+  if (!data) return;
+
+  try {
+    const urls = Array.isArray(data['attachments'])
+      ? (data['attachments'] as Partial<Attachment>[]).map(a => a.url).filter((u): u is string => !!u)
+      : [];
+    await Promise.all(urls.map(u => deleteReportFile(u)));
+
+    // Además, lo que haya quedado en la carpeta del reporte (subidas que no llegaron a guardarse).
+    const carpeta = data['taskId'] && data['reportedBy'] ? `${data['taskId']}/${data['reportedBy']}` : '';
+    if (carpeta) {
+      const { data: lista } = await supabase.storage.from(REPORTS_BUCKET).list(carpeta);
+      if (lista && lista.length > 0) {
+        await supabase.storage.from(REPORTS_BUCKET).remove(lista.map(f => `${carpeta}/${f.name}`));
+      }
+    }
+  } catch (err) {
+    console.error('Reporte eliminado, pero no se pudieron borrar todos sus adjuntos:', err);
+  }
 }
 
 /** Obtiene todos los reportes de una tarea (para CEO/Admin). */

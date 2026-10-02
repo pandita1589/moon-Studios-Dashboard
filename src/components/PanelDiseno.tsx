@@ -6,11 +6,12 @@ import {
 } from 'firebase/firestore';
 import { uploadMediaFile, deleteMediaFile } from '@/lib/supabaseclient';
 import { useAuth } from '@/contexts/AuthContext';
+import { abrirExterno } from '@/lib/escritorio';
 import type { MediaFile, MediaType } from '@/types';
 import {
   Upload, Trash2, Search, Image, Film, FileText, File,
   Download, Tag, Grid3X3, List, X, Check, AlertCircle,
-  Eye,
+  Eye, type LucideIcon,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -31,7 +32,31 @@ function formatBytes(bytes: number): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
 
-const TYPE_ICON: Record<MediaType, React.FC<any>> = {
+function msgError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+// Un <a download> sobre una URL de Supabase (otro origen) no descarga: el
+// navegador la abre. Se baja como blob y se guarda con su nombre; si falla
+// (CORS, red), se abre en el navegador del sistema.
+async function descargarArchivo(url: string, nombre: string): Promise<void> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objUrl; a.download = nombre;
+    document.body.appendChild(a); a.click(); a.remove();
+    // Se revoca después: algunos WebView aún no leyeron el blob al volver de click().
+    setTimeout(() => URL.revokeObjectURL(objUrl), 10_000);
+  } catch (e) {
+    console.error('No se pudo descargar, se abre aparte:', e);
+    await abrirExterno(url);
+  }
+}
+
+const TYPE_ICON: Record<MediaType, LucideIcon> = {
   image: Image, video: Film, document: FileText, other: File,
 };
 const TYPE_COLOR: Record<MediaType, string> = {
@@ -48,23 +73,30 @@ type ViewMode = 'grid' | 'list';
 type FilterType = 'all' | MediaType;
 type Toast = { type: 'success' | 'error'; msg: string } | null;
 
-interface PreviewFile extends MediaFile { }
+// En Firestore cada archivo guarda también una descripción (el tipo compartido no la trae).
+type DisenoFile = MediaFile & { description?: string };
 
 export default function PanelDiseno() {
-  const { currentUser, userProfile } = useAuth();
-  const [files,       setFiles]       = useState<MediaFile[]>([]);
+  const { currentUser, userProfile, isAdmin } = useAuth();
+  // Las reglas de diseno_media solo dejan editar/borrar a CEO, Administración y Diseño
+  // (isAdmin ya incluye al CEO). Subir lo puede cualquiera que entre al panel.
+  const puedeGestionar = isAdmin || userProfile?.role === 'Diseño';
+  const [files,       setFiles]       = useState<DisenoFile[]>([]);
   const [loading,     setLoading]     = useState(true);
+  const [loadError,   setLoadError]   = useState<string | null>(null);
   const [uploading,   setUploading]   = useState(false);
-  const [uploadPct,   setUploadPct]   = useState(0);
   const [deleting,    setDeleting]    = useState<string | null>(null);
   const [viewMode,    setViewMode]    = useState<ViewMode>('grid');
   const [filterType,  setFilterType]  = useState<FilterType>('all');
   const [search,      setSearch]      = useState('');
   const [toast,       setToast]       = useState<Toast>(null);
-  const [preview,     setPreview]     = useState<PreviewFile | null>(null);
-  const [tagInput,    setTagInput]    = useState('');
-  const [editingTags, setEditingTags] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const [preview,     setPreview]     = useState<DisenoFile | null>(null);
+  const [editing,     setEditing]     = useState<DisenoFile | null>(null);
+  const [editTags,    setEditTags]    = useState('');
+  const [editDesc,    setEditDesc]    = useState('');
+  const [savingEdit,  setSavingEdit]  = useState(false);
+  const fileRef  = useRef<HTMLInputElement>(null);
+  const toastRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Cargar archivos desde Firestore ─────────────────────────────────────
   useEffect(() => {
@@ -76,25 +108,35 @@ export default function PanelDiseno() {
           ...data,
           id: d.id,
           createdAt: data.createdAt?.toDate?.() ?? new Date(),
-        } as MediaFile;
+        } as DisenoFile;
       });
       setFiles(docs);
+      setLoadError(null);
       setLoading(false);
     }, err => {
+      // Sin esto, un error de permisos se veía como una galería vacía.
       console.error('Error cargando archivos:', err);
+      setLoadError(err.code === 'permission-denied'
+        ? 'No tienes permiso para ver los archivos de diseño.'
+        : 'No se pudieron cargar los archivos. Revisa tu conexión e inténtalo de nuevo.');
       setLoading(false);
     });
     return () => unsub();
   }, []);
 
+  // Un solo temporizador: si no, el de un toast anterior cierra antes de tiempo el nuevo.
   const showToast = useCallback((type: 'success' | 'error', msg: string) => {
     setToast({ type, msg });
-    setTimeout(() => setToast(null), 3500);
+    if (toastRef.current) clearTimeout(toastRef.current);
+    toastRef.current = setTimeout(() => setToast(null), 3500);
   }, []);
+  useEffect(() => () => { if (toastRef.current) clearTimeout(toastRef.current); }, []);
 
   // ── Subir archivo ────────────────────────────────────────────────────────
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    // Se limpia ya, para que elegir de nuevo el mismo archivo vuelva a disparar onChange.
+    if (fileRef.current) fileRef.current.value = '';
     if (!file || !currentUser || !userProfile) return;
 
     if (file.size > MAX_SIZE_MB * 1024 * 1024) {
@@ -102,73 +144,86 @@ export default function PanelDiseno() {
       return;
     }
 
+    // El cliente de Supabase no informa el avance de la subida: se muestra un
+    // estado "Subiendo…" sin porcentaje en vez de uno inventado.
     setUploading(true);
-    setUploadPct(10);
-
+    let subido: { path: string } | null = null;
     try {
-      // Simular progreso mientras sube
-      const progressInterval = setInterval(() => {
-        setUploadPct(p => Math.min(p + 15, 85));
-      }, 300);
-
       const result = await uploadMediaFile(file, currentUser.uid);
-      clearInterval(progressInterval);
-      setUploadPct(95);
-
-      const mediaType = getMimeType(file.type);
+      subido = result;
 
       await addDoc(collection(db, 'diseno_media'), {
         name:         file.name,
         originalName: file.name,
         url:          result.url,
         path:         result.path,
-        type:         mediaType,
+        type:         getMimeType(file.type),
         mimeType:     file.type,
         size:         file.size,
-        uploadedBy:   currentUser.uid,
-        uploaderName: userProfile.displayName,
+        uploadedBy:   currentUser.uid,   // la regla de create exige uploadedBy == uid
+        uploaderName: userProfile.displayName ?? '',
         tags:         [],
         description:  '',
         createdAt:    serverTimestamp(),
       });
 
-      setUploadPct(100);
-      setTimeout(() => { setUploading(false); setUploadPct(0); }, 600);
       showToast('success', `"${file.name}" subido correctamente`);
-    } catch (err: any) {
+    } catch (err) {
+      // Si falló el registro en Firestore, el archivo ya subido quedaría huérfano en el bucket.
+      if (subido) {
+        await deleteMediaFile(subido.path).catch(e2 => console.error('No se pudo limpiar el archivo subido:', e2));
+      }
+      showToast('error', `Error al subir: ${msgError(err)}`);
+    } finally {
       setUploading(false);
-      setUploadPct(0);
-      showToast('error', `Error al subir: ${err.message}`);
     }
-
-    // Reset input
-    if (fileRef.current) fileRef.current.value = '';
   };
 
   // ── Eliminar archivo ─────────────────────────────────────────────────────
-  const handleDelete = async (file: MediaFile) => {
+  // Primero el registro y después el archivo: si el borrado en Firestore falla,
+  // el registro sigue apuntando a un archivo que existe.
+  const handleDelete = async (file: DisenoFile) => {
     if (!window.confirm(`¿Eliminar "${file.name}"? Esta acción no se puede deshacer.`)) return;
     setDeleting(file.id);
     try {
-      await deleteMediaFile(file.path);
       await deleteDoc(doc(db, 'diseno_media', file.id));
-      showToast('success', 'Archivo eliminado');
       if (preview?.id === file.id) setPreview(null);
-    } catch (err: any) {
-      showToast('error', `Error al eliminar: ${err.message}`);
+      try {
+        await deleteMediaFile(file.path);
+        showToast('success', 'Archivo eliminado');
+      } catch (err) {
+        console.error('Registro borrado pero el archivo quedó en el almacenamiento:', err);
+        showToast('error', 'Se quitó de la galería, pero no se pudo borrar el archivo del almacenamiento');
+      }
+    } catch (err) {
+      showToast('error', `Error al eliminar: ${msgError(err)}`);
     } finally {
       setDeleting(null);
     }
   };
 
-  // ── Guardar tags ─────────────────────────────────────────────────────────
-  const handleSaveTags = async (fileId: string, tags: string[]) => {
+  // ── Editar etiquetas y descripción ───────────────────────────────────────
+  const openEdit = (file: DisenoFile) => {
+    setEditing(file);
+    setEditTags(file.tags?.join(', ') ?? '');
+    setEditDesc(file.description ?? '');
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editing) return;
+    const tags = [...new Set(editTags.split(',').map(t => t.trim().replace(/^#/, '')).filter(Boolean))];
+    const description = editDesc.trim();
+    setSavingEdit(true);
     try {
-      await updateDoc(doc(db, 'diseno_media', fileId), { tags });
-      setEditingTags(null);
-      showToast('success', 'Etiquetas actualizadas');
-    } catch (err: any) {
-      showToast('error', `Error guardando etiquetas: ${err.message}`);
+      await updateDoc(doc(db, 'diseno_media', editing.id), { tags, description });
+      // El modal de vista previa guarda una copia: se refresca para que muestre lo nuevo.
+      setPreview(p => (p && p.id === editing.id ? { ...p, tags, description } : p));
+      setEditing(null);
+      showToast('success', 'Cambios guardados');
+    } catch (err) {
+      showToast('error', `Error guardando cambios: ${msgError(err)}`);
+    } finally {
+      setSavingEdit(false);
     }
   };
 
@@ -178,7 +233,8 @@ export default function PanelDiseno() {
     const matchSearch = !search ||
       f.name.toLowerCase().includes(search.toLowerCase()) ||
       f.uploaderName?.toLowerCase().includes(search.toLowerCase()) ||
-      f.tags?.some(t => t.toLowerCase().includes(search.toLowerCase()));
+      f.tags?.some(t => t.toLowerCase().includes(search.toLowerCase())) ||
+      f.description?.toLowerCase().includes(search.toLowerCase());
     return matchType && matchSearch;
   });
 
@@ -248,6 +304,9 @@ export default function PanelDiseno() {
                     {formatBytes(preview.size)} · Subido por {preview.uploaderName} ·{' '}
                     {format(preview.createdAt, 'dd MMM yyyy, HH:mm', { locale: es })}
                   </p>
+                  {preview.description && (
+                    <p className="text-zinc-400 text-xs font-light mt-2 whitespace-pre-wrap">{preview.description}</p>
+                  )}
                   {(preview.tags ?? []).length > 0 && (
                     <div className="flex flex-wrap gap-1.5 mt-2">
                       {(preview.tags ?? []).map(tag => (
@@ -257,13 +316,82 @@ export default function PanelDiseno() {
                     </div>
                   )}
                 </div>
-                <a href={preview.url} download={preview.name}
-                  className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-light text-zinc-400 hover:text-white transition-colors flex-shrink-0"
-                  style={{ background: 'rgba(255,255,255,0.06)' }}>
-                  <Download className="w-4 h-4" strokeWidth={1.5} />
-                  Descargar
-                </a>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  {puedeGestionar && (
+                    <button onClick={() => openEdit(preview)}
+                      className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-light text-zinc-400 hover:text-white transition-colors"
+                      style={{ background: 'rgba(255,255,255,0.06)' }}>
+                      <Tag className="w-4 h-4" strokeWidth={1.5} />
+                      Editar
+                    </button>
+                  )}
+                  <button onClick={() => void descargarArchivo(preview.url, preview.name)}
+                    className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-light text-zinc-400 hover:text-white transition-colors"
+                    style={{ background: 'rgba(255,255,255,0.06)' }}>
+                    <Download className="w-4 h-4" strokeWidth={1.5} />
+                    Descargar
+                  </button>
+                </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Editar etiquetas y descripción ── */}
+      {editing && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(16px)' }}
+          onClick={() => { if (!savingEdit) setEditing(null); }}>
+          <div className="w-full max-w-md rounded-3xl overflow-hidden"
+            style={{ background: '#0a0a0a', border: '1px solid rgba(255,255,255,0.1)' }}
+            onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between gap-4 px-6 py-5 border-b border-zinc-900">
+              <h2 className="text-white text-base font-light truncate">Editar «{editing.name}»</h2>
+              <button onClick={() => setEditing(null)} disabled={savingEdit}
+                className="w-8 h-8 rounded-xl bg-zinc-900 flex items-center justify-center text-zinc-500 hover:text-white flex-shrink-0">
+                <X className="w-4 h-4" strokeWidth={1.5} />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label htmlFor="diseno-edit-tags" className="block text-zinc-500 text-xs font-light mb-2 uppercase tracking-wider">Etiquetas</label>
+                <input
+                  id="diseno-edit-tags"
+                  autoFocus
+                  value={editTags}
+                  onChange={e => setEditTags(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Escape') setEditing(null); }}
+                  placeholder="logo, campaña, redes (separadas por coma)"
+                  className="w-full px-4 py-3 rounded-2xl text-white text-sm font-light placeholder-zinc-600 outline-none"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
+                />
+              </div>
+              <div>
+                <label htmlFor="diseno-edit-desc" className="block text-zinc-500 text-xs font-light mb-2 uppercase tracking-wider">Descripción</label>
+                <textarea
+                  id="diseno-edit-desc"
+                  value={editDesc}
+                  onChange={e => setEditDesc(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Escape') setEditing(null); }}
+                  rows={4}
+                  placeholder="Para qué es, versión, notas para el equipo…"
+                  className="w-full px-4 py-3 rounded-2xl text-white text-sm font-light placeholder-zinc-600 outline-none resize-none"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
+                />
+              </div>
+            </div>
+            <div className="flex gap-3 px-6 py-5 border-t border-zinc-900">
+              <button onClick={() => setEditing(null)} disabled={savingEdit}
+                className="flex-1 py-3 rounded-2xl text-sm font-light text-zinc-500 hover:text-white transition-colors"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                Cancelar
+              </button>
+              <button onClick={handleSaveEdit} disabled={savingEdit}
+                className="flex-1 py-3 rounded-2xl text-sm font-light transition-all"
+                style={{ background: savingEdit ? '#222' : '#fff', color: savingEdit ? '#555' : '#000', cursor: savingEdit ? 'not-allowed' : 'pointer' }}>
+                {savingEdit ? 'Guardando…' : 'Guardar'}
+              </button>
             </div>
           </div>
         </div>
@@ -289,16 +417,17 @@ export default function PanelDiseno() {
               cursor: uploading ? 'not-allowed' : 'pointer',
             }}>
             <Upload className="w-4 h-4" strokeWidth={1.5} />
-            {uploading ? `Subiendo... ${uploadPct}%` : 'Subir archivo'}
+            {uploading ? 'Subiendo…' : 'Subir archivo'}
           </button>
         </div>
       </div>
 
-      {/* Progress bar de upload */}
+      {/* Barra de subida: indeterminada, no hay avance real que mostrar */}
       {uploading && (
-        <div className="rounded-2xl overflow-hidden" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+        <div className="rounded-2xl overflow-hidden" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}
+          role="status" aria-live="polite">
           <div className="h-1.5 bg-zinc-900">
-            <div className="h-full bg-white transition-all duration-300 rounded-full" style={{ width: `${uploadPct}%` }} />
+            <div className="h-full w-full bg-white/70 rounded-full animate-pulse" />
           </div>
           <p className="text-zinc-500 text-xs font-light px-4 py-2">Subiendo archivo al servidor...</p>
         </div>
@@ -357,6 +486,11 @@ export default function PanelDiseno() {
         <div className="py-20 flex items-center justify-center">
           <div className="w-6 h-6 border border-zinc-700 border-t-zinc-400 rounded-full animate-spin" />
         </div>
+      ) : loadError ? (
+        <div className="py-20 text-center rounded-3xl" style={{ border: '1px dashed rgba(248,113,113,0.25)' }}>
+          <AlertCircle className="w-10 h-10 text-red-400/60 mx-auto mb-4" strokeWidth={1} />
+          <p className="text-zinc-400 text-sm font-light">{loadError}</p>
+        </div>
       ) : filtered.length === 0 ? (
         <div className="py-20 text-center rounded-3xl" style={{ border: '1px dashed rgba(255,255,255,0.1)' }}>
           <Image className="w-10 h-10 text-zinc-800 mx-auto mb-4" strokeWidth={1} />
@@ -393,22 +527,32 @@ export default function PanelDiseno() {
                   )}
                 </div>
 
-                {/* Hover overlay */}
-                <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                  <button onClick={() => setPreview(file)}
+                {/* Overlay de acciones: solo en equipos con hover (mouse). Aparece
+                    también con el foco del teclado; invisible no captura clics, para
+                    que un toque no dispare un botón que no se ve. */}
+                <div className="absolute inset-0 bg-black/70 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto transition-opacity hidden [@media(hover:hover)]:flex items-center justify-center gap-2">
+                  <button onClick={() => setPreview(file)} title="Ver" aria-label={`Ver ${file.name}`}
                     className="w-9 h-9 rounded-xl bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-all">
                     <Eye className="w-4 h-4" strokeWidth={1.5} />
                   </button>
-                  <a href={file.url} download={file.name}
+                  <button onClick={() => void descargarArchivo(file.url, file.name)} title="Descargar" aria-label={`Descargar ${file.name}`}
                     className="w-9 h-9 rounded-xl bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-all">
                     <Download className="w-4 h-4" strokeWidth={1.5} />
-                  </a>
-                  <button onClick={() => handleDelete(file)} disabled={isDeleting}
-                    className="w-9 h-9 rounded-xl bg-red-900/40 hover:bg-red-900/70 flex items-center justify-center text-red-400 transition-all">
-                    {isDeleting
-                      ? <div className="w-4 h-4 border border-red-600 border-t-transparent rounded-full animate-spin" />
-                      : <Trash2 className="w-4 h-4" strokeWidth={1.5} />}
                   </button>
+                  {puedeGestionar && (
+                    <>
+                      <button onClick={() => openEdit(file)} title="Etiquetas y descripción" aria-label={`Editar ${file.name}`}
+                        className="w-9 h-9 rounded-xl bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-all">
+                        <Tag className="w-4 h-4" strokeWidth={1.5} />
+                      </button>
+                      <button onClick={() => handleDelete(file)} disabled={isDeleting} title="Eliminar" aria-label={`Eliminar ${file.name}`}
+                        className="w-9 h-9 rounded-xl bg-red-900/40 hover:bg-red-900/70 flex items-center justify-center text-red-400 transition-all">
+                        {isDeleting
+                          ? <div className="w-4 h-4 border border-red-600 border-t-transparent rounded-full animate-spin" />
+                          : <Trash2 className="w-4 h-4" strokeWidth={1.5} />}
+                      </button>
+                    </>
+                  )}
                 </div>
 
                 {/* Info */}
@@ -419,6 +563,30 @@ export default function PanelDiseno() {
                     <span className="text-zinc-700 text-[10px] font-light">
                       {format(file.createdAt, 'dd/MM/yy', { locale: es })}
                     </span>
+                  </div>
+                  {/* En pantallas táctiles (sin hover) las acciones quedan siempre a la vista */}
+                  <div className="flex [@media(hover:hover)]:hidden items-center gap-1.5 mt-2">
+                    <button onClick={() => void descargarArchivo(file.url, file.name)} aria-label={`Descargar ${file.name}`}
+                      className="w-8 h-8 rounded-xl flex items-center justify-center text-zinc-400"
+                      style={{ background: 'rgba(255,255,255,0.05)' }}>
+                      <Download className="w-3.5 h-3.5" strokeWidth={1.5} />
+                    </button>
+                    {puedeGestionar && (
+                      <>
+                        <button onClick={() => openEdit(file)} aria-label={`Editar ${file.name}`}
+                          className="w-8 h-8 rounded-xl flex items-center justify-center text-zinc-400"
+                          style={{ background: 'rgba(255,255,255,0.05)' }}>
+                          <Tag className="w-3.5 h-3.5" strokeWidth={1.5} />
+                        </button>
+                        <button onClick={() => handleDelete(file)} disabled={isDeleting} aria-label={`Eliminar ${file.name}`}
+                          className="w-8 h-8 rounded-xl flex items-center justify-center text-red-400 ml-auto"
+                          style={{ background: 'rgba(255,255,255,0.05)' }}>
+                          {isDeleting
+                            ? <div className="w-3.5 h-3.5 border border-red-600 border-t-transparent rounded-full animate-spin" />
+                            : <Trash2 className="w-3.5 h-3.5" strokeWidth={1.5} />}
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
@@ -433,7 +601,6 @@ export default function PanelDiseno() {
               const Icon  = TYPE_ICON[file.type];
               const color = TYPE_COLOR[file.type];
               const isDeleting = deleting === file.id;
-              const isEditingThis = editingTags === file.id;
               return (
                 <div key={file.id} className="flex items-center gap-4 px-5 py-4 hover:bg-white/[0.015] transition-colors">
                   {/* Icon/thumb */}
@@ -457,70 +624,49 @@ export default function PanelDiseno() {
                         {format(file.createdAt, 'dd MMM yyyy', { locale: es })}
                       </span>
                     </div>
+                    {file.description && (
+                      <p className="text-zinc-500 text-xs font-light truncate mt-1">{file.description}</p>
+                    )}
                     {/* Tags */}
-                    {isEditingThis ? (
-                      <div className="flex items-center gap-2 mt-2">
-                        <input
-                          autoFocus
-                          value={tagInput}
-                          onChange={e => setTagInput(e.target.value)}
-                          onKeyDown={e => {
-                            if (e.key === 'Enter') {
-                              const tags = tagInput.split(',').map(t => t.trim()).filter(Boolean);
-                              handleSaveTags(file.id, tags);
-                            }
-                            if (e.key === 'Escape') setEditingTags(null);
-                          }}
-                          placeholder="tag1, tag2, tag3 (Enter para guardar)"
-                          className="flex-1 px-3 py-1.5 rounded-xl text-xs font-light text-white placeholder-zinc-600 outline-none"
-                          style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}
-                        />
-                        <button onClick={() => {
-                          const tags = tagInput.split(',').map(t => t.trim()).filter(Boolean);
-                          handleSaveTags(file.id, tags);
-                        }} className="text-emerald-500 hover:text-emerald-400">
-                          <Check className="w-4 h-4" strokeWidth={1.5} />
-                        </button>
+                    {(file.tags ?? []).length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mt-1.5">
+                        {(file.tags ?? []).map(tag => (
+                          <span key={tag} className="px-2 py-0.5 rounded-lg text-[10px] font-light text-zinc-500"
+                            style={{ background: 'rgba(255,255,255,0.04)' }}>
+                            #{tag}
+                          </span>
+                        ))}
                       </div>
-                    ) : (
-                      (file.tags ?? []).length > 0 && (
-                        <div className="flex flex-wrap gap-1.5 mt-1.5">
-                          {(file.tags ?? []).map(tag => (
-                            <span key={tag} className="px-2 py-0.5 rounded-lg text-[10px] font-light text-zinc-500"
-                              style={{ background: 'rgba(255,255,255,0.04)' }}>
-                              #{tag}
-                            </span>
-                          ))}
-                        </div>
-                      )
                     )}
                   </div>
                   {/* Actions */}
                   <div className="flex items-center gap-2 flex-shrink-0">
-                    <button onClick={() => {
-                      setEditingTags(file.id);
-                      setTagInput(file.tags?.join(', ') ?? '');
-                    }} className="w-8 h-8 rounded-xl flex items-center justify-center text-zinc-600 hover:text-zinc-300 transition-colors"
-                      style={{ background: 'rgba(255,255,255,0.03)' }}>
-                      <Tag className="w-3.5 h-3.5" strokeWidth={1.5} />
-                    </button>
-                    <button onClick={() => setPreview(file)}
+                    {puedeGestionar && (
+                      <button onClick={() => openEdit(file)} title="Etiquetas y descripción" aria-label={`Editar ${file.name}`}
+                        className="w-8 h-8 rounded-xl flex items-center justify-center text-zinc-600 hover:text-zinc-300 transition-colors"
+                        style={{ background: 'rgba(255,255,255,0.03)' }}>
+                        <Tag className="w-3.5 h-3.5" strokeWidth={1.5} />
+                      </button>
+                    )}
+                    <button onClick={() => setPreview(file)} title="Ver" aria-label={`Ver ${file.name}`}
                       className="w-8 h-8 rounded-xl flex items-center justify-center text-zinc-600 hover:text-zinc-300 transition-colors"
                       style={{ background: 'rgba(255,255,255,0.03)' }}>
                       <Eye className="w-3.5 h-3.5" strokeWidth={1.5} />
                     </button>
-                    <a href={file.url} download={file.name}
+                    <button onClick={() => void descargarArchivo(file.url, file.name)} title="Descargar" aria-label={`Descargar ${file.name}`}
                       className="w-8 h-8 rounded-xl flex items-center justify-center text-zinc-600 hover:text-zinc-300 transition-colors"
                       style={{ background: 'rgba(255,255,255,0.03)' }}>
                       <Download className="w-3.5 h-3.5" strokeWidth={1.5} />
-                    </a>
-                    <button onClick={() => handleDelete(file)} disabled={isDeleting}
-                      className="w-8 h-8 rounded-xl flex items-center justify-center text-zinc-700 hover:text-red-400 transition-colors"
-                      style={{ background: 'rgba(255,255,255,0.03)' }}>
-                      {isDeleting
-                        ? <div className="w-3.5 h-3.5 border border-red-700 border-t-transparent rounded-full animate-spin" />
-                        : <Trash2 className="w-3.5 h-3.5" strokeWidth={1.5} />}
                     </button>
+                    {puedeGestionar && (
+                      <button onClick={() => handleDelete(file)} disabled={isDeleting} title="Eliminar" aria-label={`Eliminar ${file.name}`}
+                        className="w-8 h-8 rounded-xl flex items-center justify-center text-zinc-700 hover:text-red-400 transition-colors"
+                        style={{ background: 'rgba(255,255,255,0.03)' }}>
+                        {isDeleting
+                          ? <div className="w-3.5 h-3.5 border border-red-700 border-t-transparent rounded-full animate-spin" />
+                          : <Trash2 className="w-3.5 h-3.5" strokeWidth={1.5} />}
+                      </button>
+                    )}
                   </div>
                 </div>
               );

@@ -1,21 +1,22 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { db, logActivity as registrarActividad } from '@/lib/firebase';
 import {
   collection, addDoc, deleteDoc, doc, onSnapshot,
   query, orderBy, serverTimestamp, updateDoc, limit,
+  Timestamp, deleteField,
 } from 'firebase/firestore';
 import { useAuth } from '@/contexts/AuthContext';
 import type { SecretaryDocument, ActivityRecord, DocStatus } from '@/types';
 import {
  Plus, Trash2, Search, Check, AlertCircle,
   FileText, Clock, CheckCircle2, Archive, RotateCcw,
-  ChevronDown, X, Edit3, Activity,
+  ChevronDown, X, Edit3, Activity, CalendarDays, type LucideIcon,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 
 // ─── Status config ─────────────────────────────────────────────────────────────
-const STATUS_META: Record<DocStatus, { label: string; color: string; icon: React.FC<any> }> = {
+const STATUS_META: Record<DocStatus, { label: string; color: string; icon: LucideIcon }> = {
   draft:    { label: 'Borrador',   color: '#9ca3af', icon: Edit3 },
   review:   { label: 'En revisión', color: '#f59e0b', icon: RotateCcw },
   approved: { label: 'Aprobado',   color: '#34d399', icon: CheckCircle2 },
@@ -35,23 +36,39 @@ interface DocForm {
   content: string;
   category: string;
   status: DocStatus;
-  notes?: string;
+  notes: string;
+  dueDate: string;   // 'yyyy-MM-dd' del <input type="date">, '' si no tiene
 }
 
-const EMPTY_FORM: DocForm = { title: '', content: '', category: 'Acta', status: 'draft' };
+const EMPTY_FORM: DocForm = { title: '', content: '', category: 'Acta', status: 'draft', notes: '', dueDate: '' };
+
+// En Firestore el documento guarda también la fecha límite (el tipo compartido no la trae).
+type SecDoc = SecretaryDocument & { dueDate?: Date };
+
+function msgError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+// La fecha del input es local: se guarda al mediodía para que el cambio a UTC
+// no la corra al día anterior.
+const fechaAGuardar = (s: string) => Timestamp.fromDate(new Date(`${s}T12:00:00`));
 
 export default function PanelSecretaria() {
   const { currentUser, userProfile, isAdmin, isCEO } = useAuth();
   const canEdit = isAdmin || isCEO || userProfile?.role === 'Secretaría';
+  // Las reglas de secretaria_docs solo dejan borrar a CEO y Administración.
+  const puedeBorrar = isAdmin || isCEO;
 
-  const [docs,       setDocs]       = useState<SecretaryDocument[]>([]);
+  const [docs,       setDocs]       = useState<SecDoc[]>([]);
   const [activities, setActivities] = useState<ActivityRecord[]>([]);
   const [loading,    setLoading]    = useState(true);
+  const [loadError,  setLoadError]  = useState<string | null>(null);
+  const [statusMenu, setStatusMenu] = useState<string | null>(null);
   const [activeTab,  setActiveTab]  = useState<Tab>('documentos');
   const [search,     setSearch]     = useState('');
   const [filterStatus, setFilterStatus] = useState<DocStatus | 'all'>('all');
   const [showForm,   setShowForm]   = useState(false);
-  const [editDoc,    setEditDoc]    = useState<SecretaryDocument | null>(null);
+  const [editDoc,    setEditDoc]    = useState<SecDoc | null>(null);
   const [form,       setForm]       = useState<DocForm>(EMPTY_FORM);
   const [saving,     setSaving]     = useState(false);
   const [deleting,   setDeleting]   = useState<string | null>(null);
@@ -69,9 +86,17 @@ export default function PanelSecretaria() {
           createdAt: raw.createdAt?.toDate?.() ?? new Date(),
           updatedAt: raw.updatedAt?.toDate?.() ?? new Date(),
           dueDate:   raw.dueDate?.toDate?.() ?? undefined,
-        } as unknown as SecretaryDocument;
+        } as unknown as SecDoc;
       });
       setDocs(data);
+      setLoadError(null);
+      setLoading(false);
+    }, err => {
+      // Sin este callback, un error (p. ej. permisos) dejaba el spinner girando para siempre.
+      console.error('Error cargando documentos:', err);
+      setLoadError(err.code === 'permission-denied'
+        ? 'No tienes permiso para ver los documentos de Secretaría.'
+        : 'No se pudieron cargar los documentos. Revisa tu conexión e inténtalo de nuevo.');
       setLoading(false);
     });
     return () => unsub();
@@ -97,10 +122,14 @@ export default function PanelSecretaria() {
     return () => unsub();
   }, [puedeVerActividad]);
 
+  // Un solo temporizador: si no, el de un toast anterior cierra antes de tiempo el nuevo.
+  const toastRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showToast = useCallback((type: 'success' | 'error', msg: string) => {
     setToast({ type, msg });
-    setTimeout(() => setToast(null), 3500);
+    if (toastRef.current) clearTimeout(toastRef.current);
+    toastRef.current = setTimeout(() => setToast(null), 3500);
   }, []);
+  useEffect(() => () => { if (toastRef.current) clearTimeout(toastRef.current); }, []);
 
   const logActivity = async (action: string, description: string) => {
     try {
@@ -114,31 +143,42 @@ export default function PanelSecretaria() {
       showToast('error', 'Título y contenido son obligatorios');
       return;
     }
+    if (!currentUser) return;
     setSaving(true);
+    const base = {
+      title:    form.title.trim(),
+      content:  form.content,
+      category: form.category,
+      status:   form.status,
+      notes:    form.notes.trim(),
+    };
     try {
       if (editDoc) {
         await updateDoc(doc(db, 'secretaria_docs', editDoc.id), {
-          ...form,
+          ...base,
+          // Si se borró la fecha, se quita el campo en vez de dejar la anterior.
+          dueDate:   form.dueDate ? fechaAGuardar(form.dueDate) : deleteField(),
           updatedAt: serverTimestamp(),
         });
-        await logActivity('editar_doc', `Editó el documento: ${form.title}`);
+        await logActivity('editar_doc', `Editó el documento: ${base.title}`);
         showToast('success', 'Documento actualizado');
       } else {
         await addDoc(collection(db, 'secretaria_docs'), {
-          ...form,
-          createdBy:   currentUser?.uid,
-          creatorName: userProfile?.displayName,
+          ...base,
+          ...(form.dueDate ? { dueDate: fechaAGuardar(form.dueDate) } : {}),
+          createdBy:   currentUser.uid,   // la regla de create exige createdBy == uid
+          creatorName: userProfile?.displayName ?? '',
           createdAt:   serverTimestamp(),
           updatedAt:   serverTimestamp(),
         });
-        await logActivity('crear_doc', `Creó el documento: ${form.title}`);
+        await logActivity('crear_doc', `Creó el documento: ${base.title}`);
         showToast('success', 'Documento creado');
       }
       setForm(EMPTY_FORM);
       setShowForm(false);
       setEditDoc(null);
-    } catch (err: any) {
-      showToast('error', `Error: ${err.message}`);
+    } catch (err) {
+      showToast('error', `Error: ${msgError(err)}`);
     } finally {
       setSaving(false);
     }
@@ -146,11 +186,12 @@ export default function PanelSecretaria() {
 
   // ── Cambiar estado ───────────────────────────────────────────────────────
   const handleStatusChange = async (docId: string, status: DocStatus, title: string) => {
+    setStatusMenu(null);
     try {
       await updateDoc(doc(db, 'secretaria_docs', docId), { status, updatedAt: serverTimestamp() });
       await logActivity('cambiar_estado', `Cambió "${title}" a ${STATUS_META[status].label}`);
-    } catch (err: any) {
-      showToast('error', `Error: ${err.message}`);
+    } catch (err) {
+      showToast('error', `Error: ${msgError(err)}`);
     }
   };
 
@@ -162,16 +203,20 @@ export default function PanelSecretaria() {
       await deleteDoc(doc(db, 'secretaria_docs', id));
       await logActivity('eliminar_doc', `Eliminó el documento: ${title}`);
       showToast('success', 'Documento eliminado');
-    } catch (err: any) {
-      showToast('error', `Error: ${err.message}`);
+    } catch (err) {
+      showToast('error', `Error: ${msgError(err)}`);
     } finally {
       setDeleting(null);
     }
   };
 
-  const openEdit = (d: SecretaryDocument) => {
+  const openEdit = (d: SecDoc) => {
     setEditDoc(d);
-    setForm({ title: d.title, content: d.content, category: d.category, status: d.status });
+    setForm({
+      title: d.title, content: d.content, category: d.category, status: d.status,
+      notes:   d.notes ?? '',
+      dueDate: d.dueDate ? format(d.dueDate, 'yyyy-MM-dd') : '',
+    });
     setShowForm(true);
   };
 
@@ -273,6 +318,29 @@ export default function PanelSecretaria() {
                     style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
                   />
                 </div>
+                <div>
+                  <label htmlFor="sec-due" className="block text-zinc-500 text-xs font-light mb-2 uppercase tracking-wider">Fecha límite</label>
+                  <input
+                    id="sec-due"
+                    type="date"
+                    value={form.dueDate}
+                    onChange={e => setForm(p => ({ ...p, dueDate: e.target.value }))}
+                    className="w-full px-4 py-3 rounded-2xl text-white text-sm font-light outline-none [color-scheme:dark]"
+                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label htmlFor="sec-notes" className="block text-zinc-500 text-xs font-light mb-2 uppercase tracking-wider">Notas internas</label>
+                  <textarea
+                    id="sec-notes"
+                    value={form.notes}
+                    onChange={e => setForm(p => ({ ...p, notes: e.target.value }))}
+                    rows={3}
+                    placeholder="Pendientes, a quién se envió, observaciones..."
+                    className="w-full px-4 py-3 rounded-2xl text-white text-sm font-light placeholder-zinc-600 outline-none resize-none"
+                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
+                  />
+                </div>
               </div>
             </div>
             {/* Footer */}
@@ -360,6 +428,11 @@ export default function PanelSecretaria() {
             <div className="py-16 flex items-center justify-center">
               <div className="w-6 h-6 border border-zinc-700 border-t-zinc-400 rounded-full animate-spin" />
             </div>
+          ) : loadError ? (
+            <div className="py-16 text-center rounded-3xl" style={{ border: '1px dashed rgba(248,113,113,0.25)' }}>
+              <AlertCircle className="w-10 h-10 text-red-400/60 mx-auto mb-4" strokeWidth={1} />
+              <p className="text-zinc-400 text-sm font-light">{loadError}</p>
+            </div>
           ) : filteredDocs.length === 0 ? (
             <div className="py-16 text-center rounded-3xl" style={{ border: '1px dashed rgba(255,255,255,0.08)' }}>
               <FileText className="w-10 h-10 text-zinc-800 mx-auto mb-4" strokeWidth={1} />
@@ -388,7 +461,21 @@ export default function PanelSecretaria() {
                           </span>
                         </div>
                         <p className="text-zinc-500 text-xs font-light line-clamp-2 mb-3">{d.content}</p>
-                        <div className="flex items-center gap-3 text-xs text-zinc-700 font-light">
+                        <div className="flex items-center gap-3 text-xs text-zinc-700 font-light flex-wrap">
+                          {d.dueDate && (() => {
+                            // Vencido: fecha pasada y el documento sigue abierto (borrador o en revisión).
+                            const vencido = d.dueDate < new Date(new Date().setHours(0, 0, 0, 0)) &&
+                              (d.status === 'draft' || d.status === 'review');
+                            return (
+                              <>
+                                <span className="flex items-center gap-1" style={{ color: vencido ? '#f87171' : '#a1a1aa' }}>
+                                  <CalendarDays className="w-3 h-3" strokeWidth={1.5} />
+                                  {vencido ? 'Venció' : 'Vence'} {format(d.dueDate, 'dd MMM yyyy', { locale: es })}
+                                </span>
+                                <span>·</span>
+                              </>
+                            );
+                          })()}
                           <span>{d.creatorName}</span>
                           <span>·</span>
                           <span>{format(d.createdAt, 'dd MMM yyyy', { locale: es })}</span>
@@ -406,18 +493,25 @@ export default function PanelSecretaria() {
                       {canEdit && (
                         <div className="flex items-center gap-2 flex-shrink-0">
                           {/* Cambiar estado rápido */}
-                          <div className="relative group">
-                            <button className="w-8 h-8 rounded-xl flex items-center justify-center text-zinc-600 hover:text-zinc-300"
+                          {/* Se abre con hover y también con clic/toque o teclado (solo hover no servía en táctil) */}
+                          <div className="relative group"
+                            onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setStatusMenu(null); }}
+                            onKeyDown={e => { if (e.key === 'Escape') setStatusMenu(null); }}>
+                            <button type="button"
+                              onClick={() => setStatusMenu(m => (m === d.id ? null : d.id))}
+                              aria-label="Cambiar estado" aria-haspopup="menu" aria-expanded={statusMenu === d.id}
+                              className="w-8 h-8 rounded-xl flex items-center justify-center text-zinc-600 hover:text-zinc-300"
                               style={{ background: 'rgba(255,255,255,0.04)' }}>
                               <ChevronDown className="w-3.5 h-3.5" strokeWidth={1.5} />
                             </button>
-                            <div className="absolute right-0 top-10 z-20 w-44 rounded-2xl overflow-hidden shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto"
+                            <div className={`absolute right-0 top-10 z-20 w-44 rounded-2xl overflow-hidden shadow-2xl transition-opacity ${statusMenu === d.id ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto'}`}
+                              role="menu"
                               style={{ background: '#0d0d0d', border: '1px solid rgba(255,255,255,0.1)' }}>
                               {(Object.keys(STATUS_META) as DocStatus[]).filter(s => s !== d.status).map(s => {
                                 const m = STATUS_META[s];
                                 const Ic = m.icon;
                                 return (
-                                  <button key={s}
+                                  <button key={s} type="button" role="menuitem"
                                     onClick={() => handleStatusChange(d.id, s, d.title)}
                                     className="w-full flex items-center gap-2.5 px-4 py-3 text-left text-xs font-light hover:bg-white/[0.05] transition-colors"
                                     style={{ color: m.color }}>
@@ -428,18 +522,20 @@ export default function PanelSecretaria() {
                               })}
                             </div>
                           </div>
-                          <button onClick={() => openEdit(d)}
+                          <button onClick={() => openEdit(d)} aria-label={`Editar ${d.title}`}
                             className="w-8 h-8 rounded-xl flex items-center justify-center text-zinc-600 hover:text-zinc-300"
                             style={{ background: 'rgba(255,255,255,0.04)' }}>
                             <Edit3 className="w-3.5 h-3.5" strokeWidth={1.5} />
                           </button>
-                          <button onClick={() => handleDelete(d.id, d.title)} disabled={deleting === d.id}
-                            className="w-8 h-8 rounded-xl flex items-center justify-center text-zinc-700 hover:text-red-400"
-                            style={{ background: 'rgba(255,255,255,0.04)' }}>
-                            {deleting === d.id
-                              ? <div className="w-3.5 h-3.5 border border-red-700 border-t-transparent rounded-full animate-spin" />
-                              : <Trash2 className="w-3.5 h-3.5" strokeWidth={1.5} />}
-                          </button>
+                          {puedeBorrar && (
+                            <button onClick={() => handleDelete(d.id, d.title)} disabled={deleting === d.id} aria-label={`Eliminar ${d.title}`}
+                              className="w-8 h-8 rounded-xl flex items-center justify-center text-zinc-700 hover:text-red-400"
+                              style={{ background: 'rgba(255,255,255,0.04)' }}>
+                              {deleting === d.id
+                                ? <div className="w-3.5 h-3.5 border border-red-700 border-t-transparent rounded-full animate-spin" />
+                                : <Trash2 className="w-3.5 h-3.5" strokeWidth={1.5} />}
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>

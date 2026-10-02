@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { subscribeToAnnouncements, createAnnouncement, deleteAnnouncement } from '@/lib/firebase';
-import { Megaphone, Plus, Trash2, AlertCircle, Calendar, X, Pin, ChevronDown, Sparkles, Bell } from 'lucide-react';
+import { subscribeToAnnouncements, createAnnouncement, deleteAnnouncement, updateAnnouncement } from '@/lib/firebase';
+import { Timestamp } from 'firebase/firestore';
+import { toast } from 'sonner';
+import { Megaphone, Plus, Trash2, AlertCircle, Calendar, X, Pin, ChevronDown, Sparkles, Bell, Pencil } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { es } from 'date-fns/locale';
 import type { Announcement } from '@/types';
@@ -47,7 +49,7 @@ const STYLES = `
   html.light .ann-card-wrap:hover { box-shadow: 0 8px 32px rgba(0,0,0,0.08); }
   html:not(.light) .ann-card-wrap:hover { box-shadow: 0 12px 40px rgba(0,0,0,0.22); }
   .ann-card-wrap.important { border-color: rgba(248,113,113,0.22); }
-  .ann-card-wrap:not(.important):hover { border-color: rgba(167,139,250,0.3); }
+  .ann-card-wrap:not(.important):hover { border-color: color-mix(in srgb, var(--accent-user, #a78bfa) 30%, transparent); }
   .ann-card-wrap.important:hover { border-color: rgba(248,113,113,0.38); }
 
   /* ── Modal ── */
@@ -86,8 +88,8 @@ const STYLES = `
     font-family: inherit;
   }
   .ann-input:focus {
-    border-color: rgba(167,139,250,0.55);
-    box-shadow: 0 0 0 3px rgba(167,139,250,0.1);
+    border-color: color-mix(in srgb, var(--accent-user, #a78bfa) 55%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-user, #a78bfa) 10%, transparent);
   }
   .ann-input::placeholder { color: var(--text-muted); }
 
@@ -178,6 +180,7 @@ const STYLES = `
   }
   .ann-card-wrap:hover .ann-del-btn { opacity: 1; }
   .ann-del-btn:hover { color: #f87171; background: rgba(248,113,113,0.1); border-color: rgba(248,113,113,0.22); }
+  .ann-edit-btn:hover { color: var(--accent-user, #a78bfa); background: color-mix(in srgb, var(--accent-user, #a78bfa) 10%, transparent); border-color: color-mix(in srgb, var(--accent-user, #a78bfa) 22%, transparent); }
   .ann-del-yes {
     font-size: 10px; font-weight: 400; padding: 4px 10px; border-radius: 8px; cursor: pointer;
     background: rgba(248,113,113,0.1); color: #f87171; border: 1px solid rgba(248,113,113,0.25); font-family: inherit;
@@ -188,7 +191,7 @@ const STYLES = `
   }
 
   /* ── Icon boxes ── */
-  .ann-icon-accent { background: rgba(167,139,250,0.12); border: 1px solid rgba(167,139,250,0.22); }
+  .ann-icon-accent { background: color-mix(in srgb, var(--accent-user, #a78bfa) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent-user, #a78bfa) 22%, transparent); }
   .ann-icon-danger { background: rgba(248,113,113,0.10); border: 1px solid rgba(248,113,113,0.20); }
   .ann-icon-wrap {
     width: 42px; height: 42px; border-radius: 14px; flex-shrink: 0;
@@ -205,7 +208,7 @@ const STYLES = `
   .ann-meta     { font-size: 11px; font-weight: 300; color: var(--text-muted); }
   .ann-sep      { color: var(--border-main); }
   .ann-label    { display: block; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-muted); font-weight: 300; margin-bottom: 8px; }
-  .ann-read-more{ display: inline-flex; align-items: center; gap: 4px; margin-top: 6px; font-size: 12px; font-weight: 300; color: #a78bfa; background: none; border: none; cursor: pointer; padding: 0; font-family: inherit; }
+  .ann-read-more{ display: inline-flex; align-items: center; gap: 4px; margin-top: 6px; font-size: 12px; font-weight: 300; color: var(--accent-user, #a78bfa); background: none; border: none; cursor: pointer; padding: 0; font-family: inherit; }
   .ann-read-more:hover { opacity: 0.7; }
 
   /* ── Meta row ── */
@@ -217,7 +220,7 @@ const STYLES = `
     width: 20px; height: 20px; border-radius: 7px; flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
     font-size: 9px; font-weight: 600;
-    background: rgba(167,139,250,0.12); border: 1px solid rgba(167,139,250,0.22); color: #a78bfa;
+    background: color-mix(in srgb, var(--accent-user, #a78bfa) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent-user, #a78bfa) 22%, transparent); color: var(--accent-user, #a78bfa);
   }
   .ann-author-av.imp { background: rgba(248,113,113,0.10); border-color: rgba(248,113,113,0.20); color: #f87171; }
 
@@ -257,8 +260,17 @@ const STYLES = `
   }
 `;
 
-const ACCENT = '#a78bfa';
+// El acento sigue el color que el usuario eligió en Configuración.
+const ACCENT = 'var(--accent-user, #a78bfa)';
 const DANGER  = '#f87171';
+// Transparencia sobre un color que puede ser una variable CSS (no se le puede
+// pegar un sufijo hex como antes).
+const mezcla = (color: string, pct: number) => `color-mix(in srgb, ${color} ${pct}%, transparent)`;
+
+// createdBy guarda el uid en los anuncios nuevos y createdByName el nombre.
+// Los antiguos tienen el nombre en createdBy, de ahí el respaldo al mostrar.
+type AnnouncementDoc = Announcement & { createdByName?: string; updatedAt?: Date | null };
+const autorDe = (a: AnnouncementDoc) => a.createdByName ?? a.createdBy ?? '';
 
 // ── Loading dots ──────────────────────────────────────────────────────────────
 const LoadingDots: React.FC = () => (
@@ -272,16 +284,21 @@ const LoadingDots: React.FC = () => (
   </div>
 );
 
-// ── CreateModal ───────────────────────────────────────────────────────────────
+// ── CreateModal (crear y editar) ──────────────────────────────────────────────
 interface CreateModalProps {
   onClose: () => void;
   onSuccess: () => void;
   canEdit: boolean;
-  createdBy: string;
+  createdByUid: string;
+  createdByName: string;
+  /** Si llega, el modal edita este anuncio en vez de crear uno nuevo. */
+  editing?: AnnouncementDoc | null;
 }
 
-const CreateModal: React.FC<CreateModalProps> = ({ onClose, onSuccess, canEdit, createdBy }) => {
-  const [form, setForm]      = useState({ title: '', content: '', important: false });
+const CreateModal: React.FC<CreateModalProps> = ({ onClose, onSuccess, canEdit, createdByUid, createdByName, editing }) => {
+  const [form, setForm]      = useState(() => editing
+    ? { title: editing.title, content: editing.content, important: !!editing.important }
+    : { title: '', content: '', important: false });
   const [submitting, setSub] = useState(false);
   const [error, setError]    = useState('');
 
@@ -290,14 +307,21 @@ const CreateModal: React.FC<CreateModalProps> = ({ onClose, onSuccess, canEdit, 
     if (!form.title.trim())   { setError('El título es obligatorio.'); return; }
     if (!form.content.trim()) { setError('El contenido es obligatorio.'); return; }
     setError(''); setSub(true);
+    const datos = { title: form.title.trim(), content: form.content.trim(), important: form.important };
     try {
-      await createAnnouncement({ ...form, createdBy });
+      if (editing) {
+        await updateAnnouncement(editing.id, { ...datos, updatedAt: Timestamp.now(), updatedBy: createdByUid });
+        toast.success('Anuncio actualizado');
+      } else {
+        await createAnnouncement({ ...datos, createdBy: createdByUid, createdByName });
+        toast.success('Anuncio publicado');
+      }
       onSuccess(); onClose();
     } catch (err) {
       console.error(err);
-      setError('Error al publicar. Intenta de nuevo.');
+      setError(editing ? 'Error al guardar los cambios. Intenta de nuevo.' : 'Error al publicar. Intenta de nuevo.');
     } finally { setSub(false); }
-  }, [canEdit, form, createdBy, onSuccess, onClose]);
+  }, [canEdit, form, editing, createdByUid, createdByName, onSuccess, onClose]);
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -312,7 +336,7 @@ const CreateModal: React.FC<CreateModalProps> = ({ onClose, onSuccess, canEdit, 
         {/* Gradient strip */}
         <div style={{
           height: 3,
-          background: 'linear-gradient(90deg, #a78bfa, #60a5fa, #a78bfa)',
+          background: `linear-gradient(90deg, ${ACCENT}, #60a5fa, ${ACCENT})`,
           backgroundSize: '200% 100%',
           animation: 'ann-shimmer 2.5s linear infinite',
         }} />
@@ -322,12 +346,12 @@ const CreateModal: React.FC<CreateModalProps> = ({ onClose, onSuccess, canEdit, 
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
             <div style={{ position: 'relative', width: 40, height: 40, borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
               className="ann-icon-accent">
-              <div style={{ position: 'absolute', inset: 0, borderRadius: 14, background: 'rgba(167,139,250,0.12)', animation: 'ann-pulse-ring 2.5s ease-in-out infinite' }} />
+              <div style={{ position: 'absolute', inset: 0, borderRadius: 14, background: 'color-mix(in srgb, var(--accent-user, #a78bfa) 12%, transparent)', animation: 'ann-pulse-ring 2.5s ease-in-out infinite' }} />
               <Megaphone style={{ width: 18, height: 18, color: ACCENT, position: 'relative', zIndex: 1 }} strokeWidth={1.5} />
             </div>
             <div>
-              <p style={{ color: 'var(--text-primary)', fontWeight: 300, fontSize: 15 }}>Nuevo Anuncio</p>
-              <p className="ann-subtext">Se publicará para todos los usuarios</p>
+              <p style={{ color: 'var(--text-primary)', fontWeight: 300, fontSize: 15 }}>{editing ? 'Editar anuncio' : 'Nuevo Anuncio'}</p>
+              <p className="ann-subtext">{editing ? 'Los cambios se verán para todos los usuarios' : 'Se publicará para todos los usuarios'}</p>
             </div>
           </div>
           <button className="ann-close-btn" type="button" onClick={onClose}>
@@ -399,7 +423,7 @@ const CreateModal: React.FC<CreateModalProps> = ({ onClose, onSuccess, canEdit, 
             onClick={handleSubmit} disabled={submitting}>
             {submitting
               ? <LoadingDots />
-              : <><Sparkles style={{ width: 14, height: 14 }} strokeWidth={1.5} />Publicar Anuncio</>
+              : <><Sparkles style={{ width: 14, height: 14 }} strokeWidth={1.5} />{editing ? 'Guardar cambios' : 'Publicar Anuncio'}</>
             }
           </button>
         </div>
@@ -410,9 +434,9 @@ const CreateModal: React.FC<CreateModalProps> = ({ onClose, onSuccess, canEdit, 
 };
 
 // ── AnnouncementCard ──────────────────────────────────────────────────────────
-interface CardProps { a: Announcement; canEdit: boolean; onDelete: (id: string) => void; index: number; }
+interface CardProps { a: AnnouncementDoc; canEdit: boolean; onDelete: (id: string) => void; onEdit: (a: AnnouncementDoc) => void; index: number; }
 
-const AnnouncementCard: React.FC<CardProps> = React.memo(({ a, canEdit, onDelete, index }) => {
+const AnnouncementCard: React.FC<CardProps> = React.memo(({ a, canEdit, onDelete, onEdit, index }) => {
   const [expanded,   setExpanded]   = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
   const isLong  = a.content.length > 220;
@@ -425,7 +449,7 @@ const AnnouncementCard: React.FC<CardProps> = React.memo(({ a, canEdit, onDelete
       {/* Left accent bar */}
       <div style={{
         position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, zIndex: 1,
-        background: `linear-gradient(180deg, ${a.important ? DANGER : ACCENT}, ${a.important ? DANGER+'88' : ACCENT+'66'})`,
+        background: `linear-gradient(180deg, ${a.important ? DANGER : ACCENT}, ${a.important ? mezcla(DANGER, 53) : mezcla(ACCENT, 40)})`,
         opacity: a.important ? 1 : 0.55,
       }} />
 
@@ -464,9 +488,14 @@ const AnnouncementCard: React.FC<CardProps> = React.memo(({ a, canEdit, onDelete
                       <button type="button" className="ann-del-no"  onClick={() => setConfirmDel(false)}>No</button>
                     </div>
                   ) : (
-                    <button type="button" className="ann-del-btn" onClick={() => setConfirmDel(true)}>
-                      <Trash2 style={{ width: 14, height: 14 }} strokeWidth={1.5} />
-                    </button>
+                    <>
+                      <button type="button" className="ann-del-btn ann-edit-btn" title="Editar anuncio" onClick={() => onEdit(a)}>
+                        <Pencil style={{ width: 13, height: 13 }} strokeWidth={1.5} />
+                      </button>
+                      <button type="button" className="ann-del-btn" title="Eliminar anuncio" onClick={() => setConfirmDel(true)}>
+                        <Trash2 style={{ width: 14, height: 14 }} strokeWidth={1.5} />
+                      </button>
+                    </>
                   )}
                 </div>
               )}
@@ -483,9 +512,9 @@ const AnnouncementCard: React.FC<CardProps> = React.memo(({ a, canEdit, onDelete
             <div className="ann-meta-row">
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <div className={`ann-author-av ${a.important ? 'imp' : ''}`}>
-                  {a.createdBy?.[0]?.toUpperCase() ?? 'A'}
+                  {autorDe(a)[0]?.toUpperCase() ?? 'A'}
                 </div>
-                <span className="ann-meta">{a.createdBy}</span>
+                <span className="ann-meta">{autorDe(a) || 'Administración'}</span>
               </div>
               <span className="ann-sep">·</span>
               <span className="ann-meta" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -496,6 +525,9 @@ const AnnouncementCard: React.FC<CardProps> = React.memo(({ a, canEdit, onDelete
               <span style={{ fontSize: 11, fontWeight: 300, color: 'var(--content-quaternary)' }}>
                 {formatDistanceToNow(new Date(a.createdAt), { addSuffix: true, locale: es })}
               </span>
+              {a.updatedAt && (
+                <span className="ann-meta" title={format(a.updatedAt, "d MMM yyyy, HH:mm", { locale: es })}>(editado)</span>
+              )}
             </div>
           </div>
         </div>
@@ -507,10 +539,11 @@ AnnouncementCard.displayName = 'AnnouncementCard';
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 const Announcements: React.FC = () => {
-  const { canEdit, userProfile } = useAuth();
-  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const { canEdit, userProfile, currentUser } = useAuth();
+  const [announcements, setAnnouncements] = useState<AnnouncementDoc[]>([]);
   const [loading,       setLoading]       = useState(true);
   const [modalOpen,     setModalOpen]     = useState(false);
+  const [editing,       setEditing]       = useState<AnnouncementDoc | null>(null);
   const [filter,        setFilter]        = useState<'all' | 'important'>('all');
 
   // En vivo: antes la lista se leía una vez, así que la campana avisaba de un
@@ -520,33 +553,51 @@ const Announcements: React.FC = () => {
 
   useEffect(() => subscribeToAnnouncements(
     data => {
+      const aFecha = (v: unknown): Date | null => {
+        if (!v) return null;
+        const ts = v as { toDate?: () => Date };
+        return ts.toDate ? ts.toDate() : new Date(v as string | number);
+      };
       setAnnouncements(
-        data.map((a: any) => ({
+        data.map(a => ({
           ...a,
-          createdAt: a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt || 0),
-        })) as Announcement[]
+          createdAt: aFecha(a.createdAt) ?? new Date(0),
+          updatedAt: aFecha(a.updatedAt),
+        })) as AnnouncementDoc[]
       );
       setLoading(false);
     },
-    e => { console.error(e); setLoading(false); },
+    // Antes el error solo iba a la consola y la página quedaba vacía.
+    e => { console.error(e); toast.error('No se pudieron cargar los anuncios', { description: e.message }); setLoading(false); },
   ), []);
 
   const handleDelete = useCallback(async (id: string) => {
     if (!canEdit) return;
-    try { await deleteAnnouncement(id); load(); }
-    catch (e) { console.error(e); }
+    try { await deleteAnnouncement(id); toast.success('Anuncio eliminado'); load(); }
+    catch (e) { console.error(e); toast.error('No se pudo eliminar el anuncio', { description: (e as Error)?.message }); }
   }, [canEdit, load]);
+
+  const handleEdit = useCallback((a: AnnouncementDoc) => {
+    if (!canEdit) return;
+    setEditing(a); setModalOpen(true);
+  }, [canEdit]);
+
+  const cerrarModal = useCallback(() => { setModalOpen(false); setEditing(null); }, []);
 
   const important = announcements.filter(a => a.important);
   const visible   = filter === 'important' ? important : announcements;
 
+  // Los estilos van también en la carga: sin ellos los puntos no se animaban.
   if (loading) return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 280, gap: 16 }}>
-      <div className="ann-loading-icon ann-icon-accent">
-        <Megaphone style={{ width: 20, height: 20, color: ACCENT }} strokeWidth={1.5} />
+    <>
+      <style>{STYLES}</style>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 280, gap: 16 }}>
+        <div className="ann-loading-icon ann-icon-accent">
+          <Megaphone style={{ width: 20, height: 20, color: ACCENT }} strokeWidth={1.5} />
+        </div>
+        <LoadingDots />
       </div>
-      <LoadingDots />
-    </div>
+    </>
   );
 
   return (
@@ -554,8 +605,10 @@ const Announcements: React.FC = () => {
       <style>{STYLES}</style>
 
       {modalOpen && canEdit && (
-        <CreateModal onClose={() => setModalOpen(false)} onSuccess={load}
-          canEdit={canEdit} createdBy={userProfile?.displayName || 'Administrador'} />
+        <CreateModal key={editing?.id ?? 'nuevo'} onClose={cerrarModal} onSuccess={load}
+          canEdit={canEdit} editing={editing}
+          createdByUid={currentUser?.uid ?? userProfile?.uid ?? ''}
+          createdByName={userProfile?.displayName || 'Administrador'} />
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 24, animation: 'ann-fade-in 0.4s ease' }}>
@@ -571,7 +624,7 @@ const Announcements: React.FC = () => {
               <div>
                 <h1 className="ann-heading">Anuncios</h1>
                 <p className="ann-subtext">
-                  {announcements.length} publicación{announcements.length !== 1 ? 'es' : ''}
+                  {announcements.length} {announcements.length !== 1 ? 'publicaciones' : 'publicación'}
                   {important.length > 0 && (
                     <span style={{ color: 'rgba(248,113,113,0.8)', marginLeft: 8 }}>
                       · {important.length} importante{important.length !== 1 ? 's' : ''}
@@ -589,7 +642,7 @@ const Announcements: React.FC = () => {
               </div>
             )}
             {canEdit && (
-              <button type="button" className="ann-btn-new" onClick={() => setModalOpen(true)}>
+              <button type="button" className="ann-btn-new" onClick={() => { setEditing(null); setModalOpen(true); }}>
                 <Plus style={{ width: 16, height: 16 }} strokeWidth={2} />
                 Nuevo anuncio
               </button>
@@ -639,7 +692,7 @@ const Announcements: React.FC = () => {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {visible.map((a, i) => (
-              <AnnouncementCard key={a.id} a={a} canEdit={canEdit} onDelete={handleDelete} index={i} />
+              <AnnouncementCard key={a.id} a={a} canEdit={canEdit} onDelete={handleDelete} onEdit={handleEdit} index={i} />
             ))}
           </div>
         )}

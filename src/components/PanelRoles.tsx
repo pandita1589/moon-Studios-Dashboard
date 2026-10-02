@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom';
 import { db } from '@/lib/firebase';
 import {
   collection, doc, updateDoc, onSnapshot,
-  query, orderBy,
 } from 'firebase/firestore';
 import { useAuth } from '@/contexts/AuthContext';
 import { ROLE_PERMISSIONS } from '@/types';
@@ -11,14 +10,15 @@ import type { UserRole, Permission } from '@/types';
 import { Users, Shield, ChevronDown, Search, Check, AlertCircle } from 'lucide-react';
 
 // ─── Configuración visual de roles ────────────────────────────────────────────
+// Mismos colores que el resto de la app (Usuarios, Calendario, Admin).
 const ROLE_META: Record<UserRole, { color: string; bg: string; description: string }> = {
-  CEO:           { color: '#f59e0b', bg: '#f59e0b18', description: 'Acceso total al sistema' },
+  CEO:           { color: '#c084fc', bg: '#c084fc18', description: 'Acceso total al sistema' },
   Administración:{ color: '#60a5fa', bg: '#60a5fa18', description: 'Gestión y supervisión general' },
   Diseño:        { color: '#a78bfa', bg: '#a78bfa18', description: 'Panel de diseño gráfico y multimedia' },
-  Secretaría:    { color: '#34d399', bg: '#34d39918', description: 'Documentos, agenda y actividades' },
+  Secretaría:    { color: '#4ade80', bg: '#4ade8018', description: 'Documentos, agenda y actividades' },
   Programación:  { color: '#f472b6', bg: '#f472b618', description: 'Proyectos y control de versiones' },
-  Contador:      { color: '#fb923c', bg: '#fb923c18', description: 'Contabilidad y libro diario' },
-  Empleado:      { color: '#6b7280', bg: '#6b728018', description: 'Acceso básico al dashboard' },
+  Contador:      { color: '#34d399', bg: '#34d39918', description: 'Contabilidad y libro diario' },
+  Empleado:      { color: '#94a3b8', bg: '#94a3b818', description: 'Acceso básico al dashboard' },
 };
 
 const ALL_ROLES: UserRole[] = [
@@ -48,10 +48,11 @@ interface UserDoc {
 type Toast = { type: 'success' | 'error'; msg: string } | null;
 
 export default function PanelRoles() {
-  const { userProfile } = useAuth();
+  const { userProfile, isCEO } = useAuth();
   const [users,       setUsers]       = useState<UserDoc[]>([]);
   const [search,      setSearch]      = useState('');
   const [loading,     setLoading]     = useState(true);
+  const [loadError,   setLoadError]   = useState<string | null>(null);
   const [saving,      setSaving]      = useState<string | null>(null);
   const [toast,       setToast]       = useState<Toast>(null);
   const [activeTab,   setActiveTab]   = useState<'usuarios' | 'permisos'>('usuarios');
@@ -60,18 +61,37 @@ export default function PanelRoles() {
   const buttonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
   // ── Cargar usuarios ──────────────────────────────────────────────────────
+  // Sin orderBy: Firestore excluye los documentos que no tienen el campo
+  // ordenado, así que los usuarios sin displayName desaparecían. Se ordena acá.
   useEffect(() => {
-    const q = query(collection(db, 'users'), orderBy('displayName'));
-    const unsub = onSnapshot(q, snap => {
+    const unsub = onSnapshot(collection(db, 'users'), snap => {
       const docs = snap.docs.map(d => ({ uid: d.id, ...d.data() } as UserDoc));
+      docs.sort((a, b) => (a.displayName || a.email || '').localeCompare(b.displayName || b.email || '', 'es'));
       setUsers(docs);
+      setLoadError(null);
       setLoading(false);
     }, err => {
       console.error('Error cargando usuarios:', err);
+      setLoadError(err.code === 'permission-denied'
+        ? 'No tienes permiso para ver la lista de usuarios.'
+        : 'No se pudieron cargar los usuarios. Revisa tu conexión e inténtalo de nuevo.');
       setLoading(false);
     });
     return () => unsub();
   }, []);
+
+  // El menú es `fixed` y se calcula una sola vez al abrirlo: si la página se
+  // desplaza o cambia de tamaño queda flotando lejos del botón, así que se cierra.
+  useEffect(() => {
+    if (!openDropdown) return;
+    const cerrar = () => { setOpenDropdown(null); setDropdownPos(null); };
+    window.addEventListener('scroll', cerrar, true);
+    window.addEventListener('resize', cerrar);
+    return () => {
+      window.removeEventListener('scroll', cerrar, true);
+      window.removeEventListener('resize', cerrar);
+    };
+  }, [openDropdown]);
 
   const showToast = useCallback((type: 'success' | 'error', msg: string) => {
     setToast({ type, msg });
@@ -84,13 +104,20 @@ export default function PanelRoles() {
       showToast('error', 'No puedes cambiar tu propio rol');
       return;
     }
+    // Las reglas de Firestore solo dejan al CEO cambiar `role`.
+    if (!isCEO) {
+      showToast('error', 'Solo el CEO puede cambiar roles');
+      return;
+    }
     setSaving(uid);
     setOpenDropdown(null);
     try {
       await updateDoc(doc(db, 'users', uid), { role: newRole });
       showToast('success', 'Rol actualizado correctamente');
     } catch (err: any) {
-      showToast('error', `Error: ${err.message}`);
+      showToast('error', err?.code === 'permission-denied'
+        ? 'No tienes permiso para cambiar este rol'
+        : `Error: ${err.message}`);
     } finally {
       setSaving(null);
     }
@@ -138,7 +165,7 @@ export default function PanelRoles() {
 
       {/* ── Stats por rol ── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {ALL_ROLES.filter(r => r !== 'CEO').map(role => {
+        {ALL_ROLES.map(role => {
           const meta = ROLE_META[role];
           return (
             <div key={role}
@@ -195,6 +222,11 @@ export default function PanelRoles() {
               <div className="py-16 flex items-center justify-center">
                 <div className="w-6 h-6 border border-zinc-700 border-t-zinc-400 rounded-full animate-spin" />
               </div>
+            ) : loadError ? (
+              <div className="py-16 text-center">
+                <AlertCircle className="w-8 h-8 mx-auto mb-3" style={{ color: '#f87171' }} strokeWidth={1} />
+                <p className="text-sm font-light" style={{ color: '#f87171' }}>{loadError}</p>
+              </div>
             ) : filtered.length === 0 ? (
               <div className="py-16 text-center">
                 <Users className="w-8 h-8 text-zinc-700 mx-auto mb-3" strokeWidth={1} />
@@ -226,13 +258,13 @@ export default function PanelRoles() {
                             <img src={user.avatar} alt={user.displayName} className="w-full h-full object-cover" />
                           ) : (
                             <span className="text-white text-xs font-light">
-                              {(user.displayName ?? 'U').split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase()}
+                              {(user.displayName || user.email || 'U').split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase()}
                             </span>
                           )}
                         </div>
                         <div className="min-w-0">
                           <p className="text-white text-sm font-light truncate">
-                            {user.displayName}
+                            {user.displayName || user.email || 'Sin nombre'}
                             {isSelf && <span className="ml-2 text-zinc-600 text-xs">(tú)</span>}
                           </p>
                           <p className="text-zinc-600 text-xs font-light truncate">{user.email}</p>
@@ -250,8 +282,9 @@ export default function PanelRoles() {
 
                       {/* Dropdown para cambiar rol */}
                       <div className="col-span-3 relative">
-                        {isSelf || user.role === 'CEO' ? (
-                          <span className="text-zinc-700 text-xs font-light">—</span>
+                        {isSelf || user.role === 'CEO' || !isCEO ? (
+                          <span className="text-zinc-700 text-xs font-light"
+                            title={!isCEO && !isSelf && user.role !== 'CEO' ? 'Solo el CEO puede cambiar roles' : undefined}>—</span>
                         ) : (
                           <>
                             <button

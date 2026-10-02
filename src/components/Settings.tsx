@@ -11,7 +11,7 @@
  * ─────────────────────────────────────────────────────────────────
  */
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useSyncExternalStore } from 'react';
 import { pedirPermisoNotificaciones } from '@/lib/escritorio';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSettings } from '@/contexts/SettingsContext';
@@ -220,6 +220,42 @@ const formatDate = (date: Date, format: string, tz: string): string => {
     if (format === 'ymd') return `${p.year}/${p.month}/${p.day}`;
     return `${p.day}/${p.month}/${p.year}`;
   } catch { return date.toLocaleDateString(); }
+};
+
+// ¿Pantalla ancha (lg de Tailwind, 1024 px)? Decide qué layout se monta: antes
+// se montaban los dos (móvil y escritorio) y se ocultaba uno con CSS, así que
+// cada formulario existía dos veces en el DOM. (useIsMobile corta en 768 px,
+// no sirve para este layout.)
+const MQ_ANCHO = '(min-width: 1024px)';
+const suscribirAncho = (cb: () => void) => {
+  const mql = window.matchMedia(MQ_ANCHO);
+  mql.addEventListener('change', cb);
+  return () => mql.removeEventListener('change', cb);
+};
+const useEsPantallaAncha = () => useSyncExternalStore(
+  suscribirAncho,
+  () => window.matchMedia(MQ_ANCHO).matches,
+  () => true,
+);
+
+// Reloj de la pestaña Accesibilidad. Tiene su propio intervalo: antes un
+// setInterval de 1 s en Settings volvía a renderizar todo el panel cada segundo.
+const RelojLocal: React.FC<{ timezone: string; dateFormat: string }> = ({ timezone, dateFormat }) => {
+  const [ahora, setAhora] = useState(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setAhora(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <>
+      <div style={{ fontSize: 28, fontWeight: 200, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums', letterSpacing: '-1px' }}>
+        {ahora.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: timezone })}
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
+        {formatDate(ahora, dateFormat, timezone)} · {timezone.replace('_', ' ')}
+      </div>
+    </>
+  );
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -609,10 +645,6 @@ const Settings: React.FC = () => {
   const [activityLogs, setActivityLogs] = useState<UserActivityRecord[]>([]);
   const [loadingActivity, setLoadingActivity] = useState(false);
 
-  // ── Integrations ──
-  const [integrationStates, setIntegrationStates] = useState<Record<string, boolean>>(
-    INTEGRATIONS.reduce((a, i) => ({ ...a, [i.id]: false }), {})
-  );
 
   // ── UI ──
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -620,16 +652,11 @@ const Settings: React.FC = () => {
   const [avatarHistory, setAvatarHistory] = useState<AvatarRecord[]>([]);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [focusedField, setFocusedField] = useState<string | null>(null);
-  const [liveTime, setLiveTime] = useState(new Date());
   const [passwordStrength, setPasswordStrength] = useState(0);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // ─── Live clock ──────────────────────────────────────────────────────────
-  useEffect(() => {
-    const t = setInterval(() => setLiveTime(new Date()), 1000);
-    return () => clearInterval(t);
-  }, []);
+  const esPantallaAncha = useEsPantallaAncha();
 
   // ─── Sync settings ───────────────────────────────────────────────────────
   // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -873,14 +900,6 @@ avatar = url;
     finally { setExportingData(false); }
   };
 
-  const handleToggleIntegration = (id: string) => {
-    setIntegrationStates(prev => {
-      const next = { ...prev, [id]: !prev[id] };
-      showMsg('success', next[id] ? 'Integración conectada' : 'Integración desconectada');
-      return next;
-    });
-  };
-
   const handleFontChange = (fontId: FontId) => {
     const opt = FONT_OPTIONS.find(f => f.id === fontId);
     if (!opt) return;
@@ -1061,7 +1080,8 @@ avatar = url;
           )}
         </div>
 
-        {/* ── MOBILE ── */}
+        {/* ── MOBILE ── (solo se monta el layout que corresponde al ancho) */}
+        {!esPantallaAncha && (
         <div className="block lg:hidden px-3">
           <div className="relative mb-4" style={{ zIndex: 50 }}>
             <button onClick={() => setMobileTabOpen(o => !o)} style={{
@@ -1106,8 +1126,10 @@ avatar = url;
           </div>
           <TabContent key={activeTab} activeTab={activeTab} props={buildProps()} />
         </div>
+        )}
 
         {/* ── DESKTOP ── */}
+        {esPantallaAncha && (
         <div className="hidden lg:flex gap-5 px-4">
           <div style={{ width: 180, flexShrink: 0, padding: 8, borderRadius: 16, background: 'var(--sidebar-card-bg)', border: '1px solid var(--border-main)', height: 'fit-content', position: 'sticky', top: 24 }}>
             {TABS.map(({ key, label, icon: Icon }) => {
@@ -1134,6 +1156,7 @@ avatar = url;
             <TabContent key={activeTab} activeTab={activeTab} props={buildProps()} />
           </div>
         </div>
+        )}
       </div>
     </>
   );
@@ -1156,14 +1179,14 @@ avatar = url;
       highContrast, setHighContrast, reduceMotion, setReduceMotion, screenReader, setScreenReader,
       focusIndicator, setFocusIndicator, language, setLanguage, timezone, setTimezone, dateFormat, setDateFormat,
       autoBackup, setAutoBackup, cacheSize, almacenamiento, mb, clearingCache, clearCacheConfirm, exportingData,
-      sessions, loadingSessions, activityLogs, loadingActivity, integrationStates,
+      sessions, loadingSessions, activityLogs, loadingActivity,
       saving, avatarHistory, setAvatarHistory, previewUrl, setPreviewUrl,
-      focusedField, setFocusedField, liveTime, passwordStrength,
+      focusedField, setFocusedField, passwordStrength,
       strengthColor, strengthLabel, cardStyle, sectionTitle, accentColors,
       inputStyle, currentAvatarUrl, isMuted, currentSound, bd,
       handlePhotoSelect, handleUpdateProfile, handleChangePassword, handleToggle2FA,
       handleRevokeSession, handleRevokeAllSessions, handleClearCache, handleExportData,
-      handleToggleIntegration, daysUntilExpiry, showMsg,
+      daysUntilExpiry, showMsg,
       fileInputRef, showHistory, setShowHistory, IS_TAURI, appVersion,
       pendingUpdate, handleUpdateFromSettings,
     };
@@ -1211,14 +1234,14 @@ const TabContent: React.FC<{ activeTab: TabKey; props: any }> = ({ activeTab, pr
     highContrast, setHighContrast, reduceMotion, setReduceMotion, screenReader, setScreenReader,
     focusIndicator, setFocusIndicator, language, setLanguage, timezone, setTimezone, dateFormat, setDateFormat,
     cacheSize, almacenamiento, mb, clearingCache, clearCacheConfirm, exportingData,
-    sessions, loadingSessions, activityLogs, loadingActivity, integrationStates,
+    sessions, loadingSessions, activityLogs, loadingActivity,
     saving, avatarHistory, setPreviewUrl,
-    setFocusedField, liveTime, passwordStrength,
+    setFocusedField, passwordStrength,
     strengthColor, strengthLabel, cardStyle, sectionTitle, accentColors,
     inputStyle, currentAvatarUrl, isMuted, currentSound, bd,
     handleUpdateProfile, handleChangePassword, handleToggle2FA,
     handleRevokeSession, handleRevokeAllSessions, handleClearCache, handleExportData,
-    handleToggleIntegration, daysUntilExpiry, showMsg,
+    daysUntilExpiry, showMsg,
     fileInputRef, setShowHistory, IS_TAURI, appVersion,
     pendingUpdate, handleUpdateFromSettings,
   } = p;
@@ -1761,12 +1784,7 @@ const TabContent: React.FC<{ activeTab: TabKey; props: any }> = ({ activeTab, pr
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div>
                   <div style={sectionTitle}>Hora local actual</div>
-                  <div style={{ fontSize: 28, fontWeight: 200, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums', letterSpacing: '-1px' }}>
-                    {liveTime.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: timezone })}
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
-                    {formatDate(liveTime, dateFormat, timezone)} · {timezone.replace('_', ' ')}
-                  </div>
+                  <RelojLocal timezone={timezone} dateFormat={dateFormat} />
                 </div>
                 <AlarmClock size={30} style={{ color: 'var(--border-main)' }} />
               </div>
@@ -1847,10 +1865,9 @@ const TabContent: React.FC<{ activeTab: TabKey; props: any }> = ({ activeTab, pr
         {activeTab === 'integrations' && (
           <>
             <div style={cardStyle}>
-              <div style={sectionTitle}>Servicios conectados</div>
+              <div style={sectionTitle}>Servicios (próximamente)</div>
               {INTEGRATIONS.map((integration, i) => {
                 const Icon = integration.icon;
-                const connected = integrationStates[integration.id];
                 return (
                   <div key={integration.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '11px 0', borderBottom: i < INTEGRATIONS.length - 1 ? `1px solid ${bd}` : 'none' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
@@ -1860,14 +1877,14 @@ const TabContent: React.FC<{ activeTab: TabKey; props: any }> = ({ activeTab, pr
                       <div style={{ minWidth: 0 }}>
                         <div style={{ fontSize: 13, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
                           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{integration.label}</span>
-                          {connected && <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 20, background: 'rgba(52,211,153,0.1)', color: '#34d399', flexShrink: 0 }}>Conectado</span>}
                         </div>
                         <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{integration.desc}</div>
                       </div>
                     </div>
-                    <button onClick={() => handleToggleIntegration(integration.id)}
-                      style={{ marginLeft: 10, padding: '5px 12px', borderRadius: 8, fontSize: 12, cursor: 'pointer', border: connected ? '1px solid rgba(239,68,68,0.2)' : `1px solid ${accentColor}44`, background: connected ? 'rgba(239,68,68,0.06)' : `${accentColor}14`, color: connected ? '#f87171' : accentColor, flexShrink: 0, transition: 'all 0.2s ease' }}>
-                      {connected ? 'Desconectar' : 'Conectar'}
+                    {/* Antes el botón cambiaba un estado local que no conectaba nada y se perdía al recargar. */}
+                    <button disabled title="Todavía no disponible"
+                      style={{ marginLeft: 10, padding: '5px 12px', borderRadius: 8, fontSize: 12, cursor: 'not-allowed', opacity: 0.5, border: '1px solid var(--border-main)', background: 'var(--sidebar-card-bg)', color: 'var(--text-muted)', flexShrink: 0 }}>
+                      Próximamente
                     </button>
                   </div>
                 );

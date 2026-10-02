@@ -70,6 +70,10 @@ function fileIcon(mime: string) {
   return <File className="w-4 h-4 text-zinc-400" />;
 }
 
+function msgError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err ?? '');
+}
+
 function formatBytes(b: number) {
   if (b < 1024) return `${b} B`;
   if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
@@ -98,34 +102,86 @@ const TaskReportDialog: React.FC<TaskReportDialogProps> = ({
   const [saving,       setSaving]       = useState(false);
   const [error,        setError]        = useState<string | null>(null);
   const [existingReport, setExisting]   = useState<TaskReport | null>(null);
+  // Para qué tarea/usuario ya se cargó el reporte previo; mientras no coincida, se está cargando.
+  const [cargadoPara,  setCargadoPara]  = useState<string | null>(null);
+  const [loadError,    setLoadError]    = useState<string | null>(null);
+  const [reintento,    setReintento]    = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Archivos subidos en esta sesión del diálogo que todavía no están en un
+  // reporte guardado: si se cancela, se borran para no dejar huérfanos.
+  const subidosSesion = useRef<Set<string>>(new Set());
+  // Adjuntos ya guardados que el usuario quitó: se borran del almacenamiento
+  // solo cuando el reporte se guarda (si cancela, el reporte los sigue usando).
+  const quitadosGuardados = useRef<Set<string>>(new Set());
+  // Cambia en cada cierre: una subida que termina con el diálogo ya cerrado se descarta.
+  const sesion = useRef(0);
+
+  const clave = `${task.id}|${userProfile.uid}`;
+  const cargando = open && cargadoPara !== clave && !loadError;
+
+  const descartarSubidas = () => {
+    const urls = [...subidosSesion.current];
+    subidosSesion.current.clear();
+    quitadosGuardados.current.clear();
+    urls.forEach(url => { deleteReportFile(url).catch(console.error); });
+  };
+
+  // Si el diálogo se desmonta sin guardar (el Calendario lo quita al cerrar), limpia lo subido.
+  // El Set y el ref son siempre los mismos objetos: se capturan para usarlos en la limpieza.
+  useEffect(() => {
+    const subidos = subidosSesion.current;
+    const ses = sesion;
+    return () => {
+      ses.current++;
+      const urls = [...subidos];
+      subidos.clear();
+      urls.forEach(url => { deleteReportFile(url).catch(console.error); });
+    };
+  }, []);
 
   // Cargar reporte previo del usuario
   useEffect(() => {
     if (!open) return;
-    setError(null);
-    getMyReport(task.id, userProfile.uid).then(rep => {
-      if (rep) {
+    let vigente = true;
+    getMyReport(task.id, userProfile.uid)
+      .then(rep => {
+        if (!vigente) return;
+        setError(null);
+        setLoadError(null);
         setExisting(rep);
-        setReportStatus(rep.reportStatus);
-        setComment(rep.comment);
-        setReason(rep.reason);
-        setAttachments(rep.attachments);
-      } else {
-        setExisting(null);
-        setReportStatus('in-progress');
-        setComment('');
-        setReason('');
-        setAttachments([]);
-      }
-    });
-  }, [open, task.id, userProfile.uid]);
+        setReportStatus(rep?.reportStatus ?? 'in-progress');
+        setComment(rep?.comment ?? '');
+        setReason(rep?.reason ?? '');
+        setAttachments(rep?.attachments ?? []);
+        setCargadoPara(`${task.id}|${userProfile.uid}`);
+      })
+      .catch(err => {
+        if (!vigente) return;
+        console.error('Error cargando el reporte previo:', err);
+        // Sin saber si ya hay un reporte no se deja enviar: se duplicaría.
+        setLoadError('No se pudo cargar tu reporte anterior. Revisa tu conexión e inténtalo de nuevo.');
+      });
+    return () => { vigente = false; };
+  }, [open, task.id, userProfile.uid, reintento]);
+
+  const handleClose = () => {
+    if (saving) return;
+    sesion.current++;
+    descartarSubidas();
+    setCargadoPara(null);
+    setLoadError(null);
+    setError(null);
+    onClose();
+  };
 
   // ── Subida de archivos ───────────────────────────────────────────────────────
 
   const handleFiles = async (files: FileList | null) => {
-    if (!files) return;
+    if (!files || uploading) return;
     const arr = Array.from(files);
+    // Se limpia para que volver a elegir el mismo archivo dispare onChange.
+    if (fileInputRef.current) fileInputRef.current.value = '';
 
     // Validaciones
     if (attachments.length + arr.length > MAX_FILES) {
@@ -139,25 +195,43 @@ const TaskReportDialog: React.FC<TaskReportDialogProps> = ({
     }
     setError(null);
     setUploading(true);
+    const miSesion = sesion.current;
     try {
-      const results = await Promise.all(arr.map(f => uploadReportFile(f, task.id, userProfile.uid)));
-      setAttachments(prev => [...prev, ...results]);
-    } catch (e: any) {
-      setError(e.message ?? 'Error al subir archivos.');
+      // allSettled: si uno falla, los que sí subieron no se pierden (ni quedan huérfanos).
+      const results = await Promise.allSettled(arr.map(f => uploadReportFile(f, task.id, userProfile.uid)));
+      const ok = results.flatMap(r => (r.status === 'fulfilled' ? [r.value] : []));
+      if (miSesion !== sesion.current) {
+        ok.forEach(a => { deleteReportFile(a.url).catch(console.error); });
+        return;
+      }
+      ok.forEach(a => subidosSesion.current.add(a.url));
+      setAttachments(prev => [...prev, ...ok]);
+      const fallidos = results.filter(r => r.status === 'rejected');
+      if (fallidos.length) {
+        const r = fallidos[0] as PromiseRejectedResult;
+        setError(`${fallidos.length} archivo(s) no se pudieron subir: ${msgError(r.reason)}`);
+      }
     } finally {
       setUploading(false);
     }
   };
 
-  const handleRemoveAttachment = async (att: Attachment) => {
+  const handleRemoveAttachment = (att: Attachment) => {
     setAttachments(prev => prev.filter(a => a.url !== att.url));
-    await deleteReportFile(att.url).catch(console.error);
+    if (subidosSesion.current.has(att.url)) {
+      // Subido en esta sesión y nunca guardado: nadie más lo usa, se borra ya.
+      subidosSesion.current.delete(att.url);
+      deleteReportFile(att.url).catch(console.error);
+    } else {
+      quitadosGuardados.current.add(att.url);
+    }
   };
 
   // ── Guardar reporte ──────────────────────────────────────────────────────────
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (cargando || loadError) return;
     if (reportStatus === 'not-completed' && !reason.trim()) {
       setError('Debes indicar la razón por la que no fue completada.');
       return;
@@ -181,9 +255,16 @@ const TaskReportDialog: React.FC<TaskReportDialogProps> = ({
       } else {
         await createTaskReport(payload);
       }
+      // Ya guardado: lo subido pasa a ser del reporte y lo quitado ya no se usa.
+      const aBorrar = [...quitadosGuardados.current];
+      subidosSesion.current.clear();
+      quitadosGuardados.current.clear();
+      aBorrar.forEach(url => { deleteReportFile(url).catch(console.error); });
+      sesion.current++;
+      setCargadoPara(null);
       onClose();
-    } catch (e: any) {
-      setError(e.message ?? 'Error al guardar el reporte.');
+    } catch (e) {
+      setError(msgError(e) || 'Error al guardar el reporte.');
     } finally {
       setSaving(false);
     }
@@ -192,7 +273,7 @@ const TaskReportDialog: React.FC<TaskReportDialogProps> = ({
   // ── Render ───────────────────────────────────────────────────────────────────
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o) handleClose(); }}>
       <DialogContent className="bg-zinc-950 border-zinc-800 max-w-lg">
         <DialogHeader>
           <DialogTitle className="text-white font-extralight flex items-center gap-2">
@@ -204,6 +285,29 @@ const TaskReportDialog: React.FC<TaskReportDialogProps> = ({
           </p>
         </DialogHeader>
 
+        {cargando ? (
+          <div className="flex items-center justify-center gap-2 py-10 text-zinc-500">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span className="text-xs font-extralight">Cargando reporte…</span>
+          </div>
+        ) : loadError ? (
+          <div className="space-y-4">
+            <div className="flex items-start gap-2 p-3 bg-red-950/40 border border-red-900 rounded-md">
+              <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+              <p className="text-red-400 text-xs font-extralight">{loadError}</p>
+            </div>
+            <div className="flex gap-2">
+              <Button type="button" variant="ghost" onClick={handleClose}
+                className="flex-1 text-zinc-500 hover:text-white font-extralight">
+                Cerrar
+              </Button>
+              <Button type="button" onClick={() => { setLoadError(null); setReintento(n => n + 1); }}
+                className="flex-1 bg-white text-black hover:bg-zinc-200 font-extralight">
+                Reintentar
+              </Button>
+            </div>
+          </div>
+        ) : (
         <form onSubmit={handleSubmit} className="space-y-5 max-h-[70vh] overflow-y-auto pr-1">
 
           {/* ── Estado ── */}
@@ -271,7 +375,7 @@ const TaskReportDialog: React.FC<TaskReportDialogProps> = ({
               className="relative border border-dashed border-zinc-700 rounded-lg p-4 hover:border-zinc-500 transition-colors cursor-pointer text-center"
               onClick={() => fileInputRef.current?.click()}
               onDragOver={e => e.preventDefault()}
-              onDrop={e => { e.preventDefault(); handleFiles(e.dataTransfer.files); }}
+              onDrop={e => { e.preventDefault(); void handleFiles(e.dataTransfer.files); }}
             >
               {uploading ? (
                 <div className="flex items-center justify-center gap-2 text-zinc-400">
@@ -295,15 +399,15 @@ const TaskReportDialog: React.FC<TaskReportDialogProps> = ({
                 multiple
                 accept={ALLOWED_TYPES.join(',')}
                 className="hidden"
-                onChange={e => handleFiles(e.target.files)}
+                onChange={e => { void handleFiles(e.target.files); }}
               />
             </div>
 
             {/* Lista de adjuntos */}
             {attachments.length > 0 && (
               <div className="space-y-1.5">
-                {attachments.map((att, i) => (
-                  <div key={i} className="flex items-center gap-2 px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-md group">
+                {attachments.map(att => (
+                  <div key={att.url} className="flex items-center gap-2 px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-md group">
                     {fileIcon(att.type)}
                     <div className="flex-1 min-w-0">
                       <p className="text-zinc-300 text-xs font-extralight truncate">{att.name}</p>
@@ -315,8 +419,9 @@ const TaskReportDialog: React.FC<TaskReportDialogProps> = ({
                         Ver
                       </a>
                     )}
-                    <button type="button" onClick={() => handleRemoveAttachment(att)}
-                      className="text-zinc-700 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100">
+                    {/* Visible siempre en táctil; con mouse aparece al pasar por encima o con el foco */}
+                    <button type="button" onClick={() => handleRemoveAttachment(att)} aria-label={`Quitar ${att.name}`}
+                      className="text-zinc-700 hover:text-red-400 transition-colors [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100">
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
@@ -335,7 +440,7 @@ const TaskReportDialog: React.FC<TaskReportDialogProps> = ({
 
           {/* ── Acciones ── */}
           <div className="flex gap-2 pt-2 border-t border-zinc-800">
-            <Button type="button" variant="ghost" onClick={onClose}
+            <Button type="button" variant="ghost" onClick={handleClose} disabled={saving}
               className="flex-1 text-zinc-500 hover:text-white font-extralight">
               Cancelar
             </Button>
@@ -348,6 +453,7 @@ const TaskReportDialog: React.FC<TaskReportDialogProps> = ({
             </Button>
           </div>
         </form>
+        )}
       </DialogContent>
     </Dialog>
   );

@@ -15,9 +15,10 @@ import {
   format, startOfMonth, endOfMonth, eachDayOfInterval,
   isSameMonth, isSameDay, addMonths, subMonths,
   startOfWeek, endOfWeek, isPast, isToday, startOfDay,
-  differenceInDays,
+  differenceInDays, parseISO,
 } from 'date-fns';
 import { es } from 'date-fns/locale';
+import { toast } from 'sonner';
 import type { Task, UserProfile, UserRole } from '@/types';
 
 // ── Hex to RGB helper ─────────────────────────────────────────────────────────
@@ -276,17 +277,24 @@ const detectCountryCode = (): string => {
   }
 };
 
-const fetchHolidays = async (countryCode: string, year: number): Promise<NagerHoliday[]> => {
+// null = no se pudo consultar (sin red, API caída o país sin datos): el
+// calendario sigue funcionando y se muestra un aviso discreto.
+const fetchHolidays = async (countryCode: string, year: number): Promise<NagerHoliday[] | null> => {
   try {
     const res = await fetch(
       `https://date.nager.at/api/v3/PublicHolidays/${year}/${countryCode}`
     );
-    if (!res.ok) return [];
-    return res.json();
+    if (!res.ok) return null;
+    const data: unknown = await res.json();
+    return Array.isArray(data) ? (data as NagerHoliday[]) : null;
   } catch {
-    return [];
+    return null;
   }
 };
+
+// "YYYY-MM-DD" con new Date() se lee como medianoche UTC: en Perú (UTC-5)
+// el feriado caía el día anterior. parseISO lo toma como fecha local.
+const fechaFeriado = (h: NagerHoliday) => parseISO(h.date);
 
 // ── Extended Task shape (adds optional assignment fields beyond base Task) ─────
 interface ExtTask extends Task {
@@ -407,7 +415,7 @@ const DayPanel: React.FC<{
 }> = ({ day, tasks, users, holidays, onTaskClick, onClose, onCrearTarea }) => {
   const past  = isDayPast(day);
   const today = isToday(day);
-  const dayHolidays = holidays.filter(h => isSameDay(new Date(h.date), day));
+  const dayHolidays = holidays.filter(h => isSameDay(fechaFeriado(h), day));
 
   return (
     <div className="cal-panel">
@@ -568,6 +576,7 @@ const CalendarPage: React.FC = () => {
   const [countryCode] = useState<string>(() => detectCountryCode());
   const [holidays,    setHolidays]    = useState<NagerHoliday[]>([]);
   const [loadedYear,  setLoadedYear]  = useState<number | null>(null);
+  const [holidaysError, setHolidaysError] = useState(false);
 
   // ── Inject :root CSS vars whenever theme/accent changes ──
   useEffect(() => {
@@ -600,10 +609,15 @@ const CalendarPage: React.FC = () => {
   useEffect(() => {
     const year = currentMonth.getFullYear();
     if (loadedYear === year) return;
+    let vigente = true;
     fetchHolidays(countryCode, year).then(h => {
-      setHolidays(h);
+      // Si ya se cambió de año mientras llegaba la respuesta, se descarta.
+      if (!vigente) return;
+      setHolidays(h ?? []);
+      setHolidaysError(h === null);
       setLoadedYear(year);
     });
+    return () => { vigente = false; };
   }, [currentMonth, countryCode, loadedYear]);
 
   const visibleTasks = allTasks.filter(t => canUserSeeTask(t, userProfile));
@@ -625,7 +639,7 @@ const CalendarPage: React.FC = () => {
     filteredTasks.filter(t => isSameDay(new Date(t.date), day));
 
   const getHolidaysForDay = (day: Date) =>
-    holidays.filter(h => isSameDay(new Date(h.date), day));
+    holidays.filter(h => isSameDay(fechaFeriado(h), day));
 
   const handleDayClick = (day: Date) => {
     if (!isSameMonth(day, currentMonth)) return;
@@ -648,7 +662,7 @@ const CalendarPage: React.FC = () => {
     try {
       await updateTask(task.id, { status: task.status === 'completed' ? 'pending' : 'completed' });
       fetchTasks();
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error(err); toast.error('No se pudo cambiar el estado de la tarea'); }
   };
 
   const getAssignLabel = (task: ExtTask): string | null => {
@@ -670,16 +684,20 @@ const CalendarPage: React.FC = () => {
   const activeFilters  = (filterStatus !== 'all' ? 1 : 0) + (filterPriority !== 'all' ? 1 : 0) + (searchQuery.trim() ? 1 : 0);
 
   const userCanInteract = selectedTask ? canUserInteract(selectedTask, userProfile) : false;
-  const monthHolidays   = holidays.filter(h => isSameMonth(new Date(h.date), currentMonth));
+  const monthHolidays   = holidays.filter(h => isSameMonth(fechaFeriado(h), currentMonth));
 
   // Country flag emoji from code
   const countryFlag = (code: string) =>
     code.toUpperCase().replace(/./g, c => String.fromCodePoint(c.charCodeAt(0) + 127397));
 
+  // Los estilos van antes que el spinner: sin ellos .cal-spinner no tenía forma ni giro.
   if (loading) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 280 }}>
-      <div className="cal-spinner" />
-    </div>
+    <>
+      <style>{CAL_STYLES}</style>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 280 }}>
+        <div className="cal-spinner" />
+      </div>
+    </>
   );
 
   const panelTasks    = panelDay ? getTasksForDay(panelDay) : [];
@@ -793,10 +811,21 @@ const CalendarPage: React.FC = () => {
             <span style={{ fontSize: 11, fontWeight: 300, color: 'var(--cal-text-muted)', flexShrink: 0 }}>Feriados:</span>
             {monthHolidays.map((h, i) => (
               <span key={i} style={{ fontSize: 11, fontWeight: 300, padding: '3px 8px', borderRadius: 999, background: 'var(--cal-holiday-bg)', color: 'var(--cal-holiday-color)', border: '1px solid var(--cal-holiday-border)', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                {format(new Date(h.date), "d 'de' MMM", { locale: es })} – {h.localName}
+                {format(fechaFeriado(h), "d 'de' MMM", { locale: es })} – {h.localName}
               </span>
             ))}
           </div>
+        )}
+
+        {holidaysError && (
+          <p style={{ fontSize: 11, fontWeight: 300, color: 'var(--cal-text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <AlertCircle style={{ width: 12, height: 12, flexShrink: 0 }} strokeWidth={1.5} />
+            No se pudieron cargar los feriados de {countryCode}. El calendario funciona igual.
+            <button type="button" className="cal-accent-btn" style={{ padding: '2px 8px', fontSize: 11 }}
+              onClick={() => { setHolidaysError(false); setLoadedYear(null); }}>
+              Reintentar
+            </button>
+          </p>
         )}
 
         {/* ── Grid view ── */}
@@ -891,7 +920,7 @@ const CalendarPage: React.FC = () => {
                   day={panelDay} tasks={panelTasks} users={users} holidays={panelHolidays}
                   onTaskClick={handleTaskClick}
                   onClose={() => { setPanelDay(null); setMobilePanelOpen(false); }}
-                    onCrearTarea={isCEO ? () => crearTareaEn(panelDay) : undefined}
+                  onCrearTarea={isCEO ? () => crearTareaEn(panelDay) : undefined}
                 />
               </div>
             )}
@@ -1006,6 +1035,15 @@ const CalendarPage: React.FC = () => {
                       Reportar estado
                     </button>
                   </div>
+                )}
+
+                {isCEO && (
+                  // El CEO no tenía desde aquí cómo editar la tarea: se gestiona en su panel.
+                  <button type="button" className="cal-report-btn"
+                    onClick={() => { setDialogOpen(false); navigate('/dashboard/ceo-panel'); }}>
+                    <ShieldCheck style={{ width: 15, height: 15, color: 'var(--cal-accent)' }} strokeWidth={1.5} />
+                    Gestionar en el Panel CEO
+                  </button>
                 )}
 
                 {!userCanInteract && !isCEO && (

@@ -2,7 +2,8 @@
  * Proyectos.tsx — Panel de Proyectos de la empresa
  * ─────────────────────────────────────────────────────────────────
  * • TODOS los usuarios pueden ver los proyectos
- * • Solo CEO / Administración pueden crear, editar y eliminar
+ * • CEO / Administración / Programación pueden crear y editar
+ *   (igual que las reglas de Firestore); eliminar, solo CEO / Administración
  * • Cada proyecto tiene: portada (Supabase), datos básicos, estado,
  *   prioridad, progreso, miembros, links, etiquetas, stack,
  *   y un sistema de BLOQUES de contenido rico (texto, idea, árbol,
@@ -18,8 +19,9 @@ import React, {
 import {
   collection, addDoc, updateDoc, deleteDoc,
   doc, onSnapshot, serverTimestamp, query, orderBy,
+  getDocs, where, writeBatch,
 } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { db, subscribeToUsers } from '@/lib/firebase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSettings } from '@/contexts/SettingsContext';
 import { supabase } from '@/lib/supabaseclient';
@@ -32,7 +34,7 @@ import {
   PlusCircle, Save, Search, Package, Archive,
   Play, Pause, Lightbulb, AlignLeft, List,
   GitBranch, Minus, Image as ImageIcon,
-  GripVertical, Sparkles, Code2, Star,
+  GripVertical, Sparkles, Code2, Star, ChevronUp, ChevronDown,
   LayoutGrid, LayoutList,
   ArrowUpRight, Flag, Hash, Workflow,
 } from 'lucide-react';
@@ -138,6 +140,14 @@ const BLANK_PROJECT: Omit<Project, 'id'> = {
 
 const genId = () => Math.random().toString(36).slice(2, 10);
 
+type UsuarioLite = { uid: string; displayName?: string; email?: string };
+
+// `members` guarda uids (igual que Programación); aquí se muestran nombres.
+const nombreDe = (users: UsuarioLite[], uid: string) => {
+  const u = users.find(x => x.uid === uid);
+  return u?.displayName || u?.email || 'Usuario no encontrado';
+};
+
 // ─── Supabase helpers mejorados ───────────────────────────────────────────────
 
 async function uploadCover(file: File, pid: string): Promise<{ url: string; path: string }> {
@@ -184,7 +194,8 @@ const StatusBadge: React.FC<{ status: ProjectStatus; tiny?: boolean }> = ({ stat
 };
 
 const PriorityPip: React.FC<{ priority: Priority }> = ({ priority }) => {
-  const { color, label } = PRIORITY_CFG[priority];
+  // Un documento sin prioridad (o con una desconocida) rompía la tarjeta.
+  const { color, label } = PRIORITY_CFG[priority] ?? PRIORITY_CFG.medium;
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--content-tertiary)' }}>
       <Flag size={9} style={{ color }} strokeWidth={2} />
@@ -407,9 +418,11 @@ const BlockEditor: React.FC<{
   block: Block;
   onChange: (b: Block) => void;
   onDelete: () => void;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
   accent: string;
   inputStyle: React.CSSProperties;
-}> = ({ block, onChange, onDelete, accent, inputStyle }) => {
+}> = ({ block, onChange, onDelete, onMoveUp, onMoveDown, accent, inputStyle }) => {
   const cfg = BLOCK_CFG[block.type];
   const [listInput, setListInput] = useState('');
   const [itemEdit, setItemEdit] = useState<{ idx: number; val: string } | null>(null);
@@ -437,6 +450,13 @@ const BlockEditor: React.FC<{
           placeholder={cfg.label}
           style={{ flex: 1, background: 'none', border: 'none', outline: 'none', fontSize: 11, fontWeight: 500, color: 'var(--content-secondary)', fontFamily: 'inherit', letterSpacing: '0.03em' }}
         />
+        {/* Flechas además del arrastre: el drag de HTML5 no funciona con el dedo. */}
+        <button onClick={onMoveUp} disabled={!onMoveUp} title="Subir bloque" aria-label="Subir bloque" style={{ background: 'none', border: 'none', cursor: onMoveUp ? 'pointer' : 'default', padding: 2, color: 'var(--content-tertiary)', display: 'flex', opacity: onMoveUp ? 1 : 0.3 }}>
+          <ChevronUp size={12} />
+        </button>
+        <button onClick={onMoveDown} disabled={!onMoveDown} title="Bajar bloque" aria-label="Bajar bloque" style={{ background: 'none', border: 'none', cursor: onMoveDown ? 'pointer' : 'default', padding: 2, color: 'var(--content-tertiary)', display: 'flex', opacity: onMoveDown ? 1 : 0.3 }}>
+          <ChevronDown size={12} />
+        </button>
         <button onClick={onDelete} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: '#f87171', display: 'flex' }}>
           <Trash2 size={12} />
         </button>
@@ -561,14 +581,19 @@ const BlockEditor: React.FC<{
 // ─── Main component ───────────────────────────────────────────────────────────
 
 const Proyectos: React.FC = () => {
-  const { userProfile } = useAuth();
+  const { userProfile, isCEO, isAdmin } = useAuth();
   const { settings } = useSettings();
   const accent = settings.accentColor || '#6366f1';
-  const isAdmin = ['CEO', 'Administración', 'Programación'].includes(userProfile?.role ?? '');
+  // Igual que las reglas de dev_projects: escriben CEO/Administración/Programación,
+  // borran solo CEO/Administración (isAdmin ya incluye al CEO).
+  const canEdit   = isCEO || isAdmin || userProfile?.role === 'Programación';
+  const canDelete = isAdmin;
 
   // ── State ──────────────────────────────────────────────────────────────────
   const [projects,      setProjects]      = useState<Project[]>([]);
   const [loading,       setLoading]       = useState(true);
+  const [loadError,     setLoadError]     = useState<string | null>(null);
+  const [users,         setUsers]         = useState<UsuarioLite[]>([]);
   const [search,        setSearch]        = useState('');
   const [filterStatus,  setFilterStatus]  = useState<ProjectStatus | 'all'>('all');
   const [viewMode,      setViewMode]      = useState<'grid' | 'list'>('grid');
@@ -601,9 +626,21 @@ const Proyectos: React.FC = () => {
     const q = query(collection(db, 'dev_projects'), orderBy('createdAt', 'desc'));
     return onSnapshot(q, snap => {
       setProjects(snap.docs.map(d => ({ id: d.id, ...d.data(), ...leerCamposComunes(d.data()) } as unknown as Project)));
+      setLoadError(null);
       setLoading(false);
-    }, () => setLoading(false));
+    }, err => {
+      // Antes caía en "Aún no hay proyectos", como si la lista estuviera vacía.
+      console.error('dev_projects:', err);
+      setLoadError('No se pudieron cargar los proyectos. Revisa tu conexión o tus permisos.');
+      setLoading(false);
+    });
   }, []);
+
+  // Para elegir y mostrar miembros (se guardan sus uids).
+  useEffect(() => subscribeToUsers(
+    u => setUsers(u as UsuarioLite[]),
+    err => console.error('users:', err),
+  ), []);
 
   // ── Derived ────────────────────────────────────────────────────────────────
   const filtered = projects.filter(p => {
@@ -694,11 +731,13 @@ const Proyectos: React.FC = () => {
     // ── 2. Guardar en Firestore ─────────────────────────────────────
     try {
       if (form.id) {
-        // Si editamos y había portada anterior diferente, borramos la vieja
-        if (pendingCover && form.coverPath && form.coverPath !== coverPath) {
-          await deleteCover(form.coverPath);
-        }
         await updateDoc(doc(db, 'dev_projects', form.id), escribirCamposComunes(payload));
+        // La portada anterior se borra DESPUÉS de guardar (si falla el guardado
+        // el documento seguiría apuntando a ella) y se compara con la del
+        // documento, no con el formulario: "quitar portada" vacía form.coverPath
+        // y la imagen vieja se quedaba en Supabase para siempre.
+        const anterior = projects.find(x => x.id === form.id)?.coverPath;
+        if (anterior && anterior !== coverPath) await deleteCover(anterior);
         showToast('success', 'Proyecto actualizado');
       } else {
         const ref = await addDoc(collection(db, 'dev_projects'), {
@@ -741,8 +780,23 @@ const Proyectos: React.FC = () => {
       await deleteCover(p.coverPath);
     }
 
+    // ── 3. Sus tareas de Programación (dev_tasks) quedaban huérfanas ──
+    let tareasOk = true;
+    try {
+      const snap = await getDocs(query(collection(db, 'dev_tasks'), where('projectId', '==', id)));
+      for (let i = 0; i < snap.docs.length; i += 450) {   // un batch admite 500
+        const batch = writeBatch(db);
+        snap.docs.slice(i, i + 450).forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
+    } catch (err) {
+      console.error('Borrando tareas del proyecto:', err);
+      tareasOk = false;
+    }
+
     if (activeProject === id) setActiveProject(null);
-    showToast('success', 'Proyecto eliminado');
+    if (tareasOk) showToast('success', 'Proyecto eliminado');
+    else showToast('error', 'Proyecto eliminado, pero no se pudieron borrar sus tareas');
 
   } catch (e: any) {
     showToast('error', e.message ?? 'Error al eliminar el proyecto');
@@ -757,7 +811,8 @@ const Proyectos: React.FC = () => {
       id: genId(), type,
       title: '', content: '',
       items: [], tree: [],
-      order: (form.blocks ?? []).length,
+      // max+1 y no length: tras borrar un bloque, length repetía un order existente.
+      order: (form.blocks ?? []).reduce((m, b) => Math.max(m, b.order ?? 0), -1) + 1,
     };
     setForm(f => ({ ...f, blocks: [...(f.blocks ?? []), block] }));
   };
@@ -770,12 +825,15 @@ const Proyectos: React.FC = () => {
 
   const moveBlock = (id: string, dir: -1 | 1) => {
     setForm(f => {
-      const blocks = [...(f.blocks ?? [])];
+      // Los bloques se pintan ordenados por `order`, no por su posición en el
+      // array: intercambiar posiciones no movía nada. Se ordena, se intercambia
+      // y se renumera el `order`.
+      const blocks = [...(f.blocks ?? [])].sort((a, b) => a.order - b.order);
       const idx = blocks.findIndex(b => b.id === id);
       const next = idx + dir;
-      if (next < 0 || next >= blocks.length) return f;
+      if (idx < 0 || next < 0 || next >= blocks.length) return f;
       [blocks[idx], blocks[next]] = [blocks[next], blocks[idx]];
-      return { ...f, blocks };
+      return { ...f, blocks: blocks.map((b, i) => ({ ...b, order: i })) };
     });
   };
 
@@ -854,7 +912,7 @@ const Proyectos: React.FC = () => {
               </button>
             ))}
           </div>
-          {isAdmin && (
+          {canEdit && (
             <button onClick={openCreate} style={{
               display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px',
               borderRadius: 10, fontSize: 13, cursor: 'pointer',
@@ -907,13 +965,18 @@ const Proyectos: React.FC = () => {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 80 }}>
           <Loader2 size={24} style={{ color: accent }} className="animate-spin" />
         </div>
+      ) : loadError ? (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '64px 24px', border: '1px dashed rgba(239,68,68,0.3)', borderRadius: 18, gap: 12, textAlign: 'center' }}>
+          <AlertCircle size={32} style={{ color: '#f87171' }} />
+          <p style={{ fontSize: 14, color: '#f87171', margin: 0 }}>{loadError}</p>
+        </div>
       ) : filtered.length === 0 ? (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '64px 24px', border: `1px dashed ${bd}`, borderRadius: 18, gap: 12 }}>
           <Package size={32} style={{ color: 'var(--content-quaternary)' }} />
           <p style={{ fontSize: 14, color: 'var(--content-tertiary)', margin: 0 }}>
             {search || filterStatus !== 'all' ? 'Sin resultados con ese filtro' : 'Aún no hay proyectos'}
           </p>
-          {isAdmin && !search && filterStatus === 'all' && (
+          {canEdit && !search && filterStatus === 'all' && (
             <button onClick={openCreate} style={{ padding: '7px 16px', borderRadius: 10, fontSize: 12, cursor: 'pointer', background: `${accent}14`, border: `1px solid ${accent}28`, color: accent, fontFamily: 'inherit' }}>
               Crear el primer proyecto
             </button>
@@ -930,7 +993,7 @@ const Proyectos: React.FC = () => {
               </div>
               <ProjectGrid
                 projects={pinned} viewMode={viewMode} accent={accent}
-                isAdmin={isAdmin}
+                canEdit={canEdit} canDelete={canDelete}
                 onOpen={id => setActiveProject(id)}
                 onEdit={openEdit}
                 onDelete={id => setDelConfirm(id)}
@@ -952,7 +1015,7 @@ const Proyectos: React.FC = () => {
               )}
               <ProjectGrid
                 projects={unpinned} viewMode={viewMode} accent={accent}
-                isAdmin={isAdmin}
+                canEdit={canEdit} canDelete={canDelete}
                 onOpen={id => setActiveProject(id)}
                 onEdit={openEdit}
                 onDelete={id => setDelConfirm(id)}
@@ -970,7 +1033,8 @@ const Proyectos: React.FC = () => {
         <DetailPanel
           project={activeProjectData}
           accent={accent}
-          isAdmin={isAdmin}
+          canEdit={canEdit}
+          users={users}
           onClose={() => setActiveProject(null)}
           onEdit={openEdit}
         />
@@ -1005,6 +1069,7 @@ const Proyectos: React.FC = () => {
           onUpdateBlock={updateBlock}
           onDeleteBlock={deleteBlock}
           onMoveBlock={moveBlock}
+          users={users}
           inputStyle={inputStyle} labelStyle={labelStyle}
         />
       )}
@@ -1018,7 +1083,8 @@ interface GridProps {
   projects: Project[];
   viewMode: 'grid' | 'list';
   accent: string;
-  isAdmin: boolean;
+  canEdit: boolean;
+  canDelete: boolean;
   onOpen: (id: string) => void;
   onEdit: (p: Project) => void;
   onDelete: (id: string) => void;
@@ -1026,14 +1092,15 @@ interface GridProps {
   onDelConfirm: (id: string) => void;
   onDelCancel: () => void;
 }
-const ProjectGrid: React.FC<GridProps> = ({ projects, viewMode, accent, isAdmin, onOpen, onEdit, onDelete, delConfirm, onDelConfirm, onDelCancel }) => (
+const ProjectGrid: React.FC<GridProps> = ({ projects, viewMode, accent, canEdit, canDelete, onOpen, onEdit, onDelete, delConfirm, onDelConfirm, onDelCancel }) => (
   <div style={viewMode === 'grid'
-    ? { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(288px, 1fr))', gap: 12 }
+    // min(288px, 100%): en pantallas angostas la tarjeta se encoge en vez de desbordar.
+    ? { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(288px, 100%), 1fr))', gap: 12 }
     : { display: 'flex', flexDirection: 'column', gap: 8 }
   }>
     {projects.map(p => (
       <ProjectCard key={p.id} project={p} viewMode={viewMode} accent={accent}
-        isAdmin={isAdmin} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete}
+        canEdit={canEdit} canDelete={canDelete} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete}
         delConfirm={delConfirm} onDelConfirm={onDelConfirm} onDelCancel={onDelCancel} />
     ))}
   </div>
@@ -1043,14 +1110,15 @@ const ProjectGrid: React.FC<GridProps> = ({ projects, viewMode, accent, isAdmin,
 
 const ProjectCard: React.FC<{
   project: Project; viewMode: 'grid' | 'list'; accent: string;
-  isAdmin: boolean;
+  canEdit: boolean;
+  canDelete: boolean;
   onOpen: (id: string) => void;
   onEdit: (p: Project) => void;
   onDelete: (id: string) => void;
   delConfirm: string | null;
   onDelConfirm: (id: string) => void;
   onDelCancel: () => void;
-}> = ({ project, viewMode, isAdmin, onOpen, onEdit, onDelete, delConfirm, onDelConfirm, onDelCancel }) => {
+}> = ({ project, viewMode, canEdit, canDelete, onOpen, onEdit, onDelete, delConfirm, onDelConfirm, onDelCancel }) => {
   const color = project.color || '#6366f1';
   const bd    = 'var(--border-main)';
   const [hov, setHov] = useState(false);
@@ -1059,7 +1127,7 @@ const ProjectCard: React.FC<{
     <div
       onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
       style={{
-        display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px',
+        display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', flexWrap: 'wrap',
         background: 'var(--sidebar-card-bg)',
         border: `1px solid ${hov ? color + '30' : bd}`,
         borderRadius: 12, cursor: 'pointer', transition: 'border-color 0.2s',
@@ -1087,10 +1155,10 @@ const ProjectCard: React.FC<{
           <ProgressBar value={project.progress} color={color} />
         </div>
         <span style={{ fontSize: 10, color, minWidth: 28, textAlign: 'right' }}>{project.progress}%</span>
-        {isAdmin && (
+        {canEdit && (
           <div style={{ display: 'flex', gap: 4 }} onClick={e => e.stopPropagation()}>
             <button onClick={() => onEdit(project)} style={{ padding: '4px 8px', borderRadius: 7, fontSize: 11, cursor: 'pointer', background: 'var(--overlay-bg)', border: `1px solid ${bd}`, color: 'var(--content-secondary)', fontFamily: 'inherit', display: 'flex' }}><Pencil size={11} /></button>
-            {delConfirm === project.id ? (
+            {!canDelete ? null : delConfirm === project.id ? (
               <>
                 <button onClick={() => onDelConfirm(project.id)} style={{ padding: '4px 8px', borderRadius: 7, fontSize: 11, cursor: 'pointer', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', color: '#f87171', fontFamily: 'inherit' }}>Sí</button>
                 <button onClick={onDelCancel} style={{ padding: '4px 8px', borderRadius: 7, fontSize: 11, cursor: 'pointer', background: 'var(--overlay-bg)', border: `1px solid ${bd}`, color: 'var(--content-secondary)', fontFamily: 'inherit' }}>No</button>
@@ -1172,7 +1240,7 @@ const ProjectCard: React.FC<{
       </div>
 
       {/* Footer */}
-      {isAdmin && (
+      {canEdit && (
         <div style={{ padding: '8px 15px', borderTop: `1px solid ${bd}`, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 5 }} onClick={e => e.stopPropagation()}>
           {delConfirm === project.id ? (
             <>
@@ -1183,7 +1251,8 @@ const ProjectCard: React.FC<{
           ) : (
             <>
               <button onClick={() => onEdit(project)} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 9px', borderRadius: 7, fontSize: 11, cursor: 'pointer', background: 'var(--overlay-bg)', border: `1px solid ${bd}`, color: 'var(--content-secondary)', fontFamily: 'inherit' }}><Pencil size={10} /> Editar</button>
-              <button onClick={() => onDelete(project.id)} style={{ padding: '5px 8px', borderRadius: 7, fontSize: 11, cursor: 'pointer', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)', color: '#f87171', fontFamily: 'inherit', display: 'flex' }}><Trash2 size={10} /></button>
+              {/* Las reglas solo dejan borrar a CEO/Administración. */}
+              {canDelete && <button onClick={() => onDelete(project.id)} style={{ padding: '5px 8px', borderRadius: 7, fontSize: 11, cursor: 'pointer', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)', color: '#f87171', fontFamily: 'inherit', display: 'flex' }}><Trash2 size={10} /></button>}
             </>
           )}
         </div>
@@ -1195,9 +1264,10 @@ const ProjectCard: React.FC<{
 // ─── DetailPanel ──────────────────────────────────────────────────────────────
 
 const DetailPanel: React.FC<{
-  project: Project; accent: string; isAdmin: boolean;
+  project: Project; accent: string; canEdit: boolean;
+  users: UsuarioLite[];
   onClose: () => void; onEdit: (p: Project) => void;
-}> = ({ project, accent, isAdmin, onClose, onEdit }) => {
+}> = ({ project, accent, canEdit, users, onClose, onEdit }) => {
   const color = project.color || accent;
   const bd    = 'var(--border-main)';
 
@@ -1221,7 +1291,7 @@ const DetailPanel: React.FC<{
           <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(to bottom, transparent 30%, var(--bg-sidebar))` }} />
           {/* close + edit */}
           <div style={{ position: 'absolute', top: 12, right: 12, display: 'flex', gap: 6 }}>
-            {isAdmin && (
+            {canEdit && (
               <button onClick={() => onEdit(project)} style={{ height: 30, padding: '0 10px', borderRadius: 8, background: `${color}20`, border: `1px solid ${color}30`, color, fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontFamily: 'inherit' }}>
                 <Pencil size={11} /> Editar
               </button>
@@ -1261,7 +1331,7 @@ const DetailPanel: React.FC<{
           </div>
 
           {/* Meta */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8 }}>
             {[
               { label: 'Responsable', value: project.leadName || '—', icon: Users2 },
               { label: 'Inicio',      value: project.startDate || '—', icon: CalendarDays },
@@ -1277,6 +1347,20 @@ const DetailPanel: React.FC<{
               </div>
             ))}
           </div>
+
+          {/* Miembros */}
+          {(project.members ?? []).length > 0 && (
+            <div>
+              <span style={{ fontSize: 9, color: 'var(--content-quaternary)', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 7 }}>Miembros</span>
+              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                {project.members.map(uid => (
+                  <span key={uid} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 8, fontSize: 11, background: 'var(--overlay-bg)', border: `1px solid ${bd}`, color: 'var(--content-secondary)' }}>
+                    <Users2 size={10} /> {nombreDe(users, uid)}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Tags */}
           {(project.tags ?? []).length > 0 && (
@@ -1351,6 +1435,7 @@ interface ModalProps {
   onUpdateBlock: (id: string, b: Block) => void;
   onDeleteBlock: (id: string) => void;
   onMoveBlock: (id: string, dir: -1 | 1) => void;
+  users: UsuarioLite[];
   inputStyle: React.CSSProperties;
   labelStyle: React.CSSProperties;
 }
@@ -1545,8 +1630,8 @@ const ProjectModal: React.FC<ModalProps> = ({
   saving, uploadingCover, onSave, onClose, accent,
   tagInput, setTagInput, onAddTag, onRemoveTag,
   techInput, setTechInput, onAddTech, onRemoveTech,
-  onAddBlock, onUpdateBlock, onDeleteBlock,
-  inputStyle, labelStyle,
+  onAddBlock, onUpdateBlock, onDeleteBlock, onMoveBlock,
+  users, inputStyle, labelStyle,
 }) => {
   const isEdit = !!form.id;
   const bd = 'var(--border-main)';
@@ -1674,7 +1759,7 @@ const [draggingIdx, setDraggingIdx] = useState<number | null>(null);
               </div>
 
               {/* Status + Priority */}
-<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+<div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
   <div>
     <label style={labelStyle}>Estado</label>
     <CustomSelect
@@ -1712,7 +1797,7 @@ const [draggingIdx, setDraggingIdx] = useState<number | null>(null);
               </div>
 
               {/* Dates */}
-<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+<div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
   <div>
     <label style={labelStyle}>Fecha inicio</label>
     <CustomDateInput
@@ -1737,6 +1822,44 @@ const [draggingIdx, setDraggingIdx] = useState<number | null>(null);
               <div>
                 <label style={labelStyle}>Responsable</label>
                 <input value={form.leadName || ''} onChange={e => setForm((f: any) => ({ ...f, leadName: e.target.value }))} placeholder="Nombre del responsable" style={inputStyle} />
+              </div>
+
+              {/* Miembros: uids, igual que guarda Programación */}
+              <div>
+                <label style={labelStyle}>Miembros</label>
+                <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                  {users.length === 0 && (form.members ?? []).length === 0 && (
+                    <span style={{ fontSize: 11, color: 'var(--content-quaternary)' }}>No hay usuarios para mostrar</span>
+                  )}
+                  {/* Miembros guardados que ya no están en la lista: se pueden quitar */}
+                  {(form.members ?? []).filter(uid => !users.some(u => u.uid === uid)).map(uid => (
+                    <button key={uid} type="button"
+                      onClick={() => setForm((f: Partial<Project>) => ({ ...f, members: (f.members ?? []).filter(m => m !== uid) }))}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 8, fontSize: 11, cursor: 'pointer', fontFamily: 'inherit', background: `${color}12`, border: `1px solid ${color}25`, color }}>
+                      {nombreDe(users, uid)} <X size={9} />
+                    </button>
+                  ))}
+                  {users.map(u => {
+                    const sel = (form.members ?? []).includes(u.uid);
+                    return (
+                      <button key={u.uid} type="button"
+                        onClick={() => setForm((f: Partial<Project>) => ({
+                          ...f,
+                          members: sel ? (f.members ?? []).filter(m => m !== u.uid) : [...(f.members ?? []), u.uid],
+                        }))}
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 8, fontSize: 11,
+                          cursor: 'pointer', fontFamily: 'inherit',
+                          background: sel ? `${color}12` : 'var(--overlay-bg)',
+                          border: `1px solid ${sel ? color + '25' : bd}`,
+                          color: sel ? color : 'var(--content-secondary)',
+                        }}>
+                        {sel && <CheckCircle2 size={9} />}
+                        {u.displayName || u.email || u.uid}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               {/* Tags */}
@@ -1818,7 +1941,7 @@ const [draggingIdx, setDraggingIdx] = useState<number | null>(null);
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
                   <span style={{ fontSize: 11, color: 'var(--content-tertiary)' }}>
-                    {(form.blocks ?? []).length} bloque{(form.blocks ?? []).length !== 1 ? 's' : ''} — arrastra para reordenar
+                    {(form.blocks ?? []).length} bloque{(form.blocks ?? []).length !== 1 ? 's' : ''} — arrastra o usa las flechas para reordenar
                   </span>
                   <button onClick={() => setShowBlockPicker(v => !v)} style={{
                     display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', borderRadius: 9,
@@ -1898,6 +2021,8 @@ const [draggingIdx, setDraggingIdx] = useState<number | null>(null);
           block={block}
           onChange={b => onUpdateBlock(block.id, b)}
           onDelete={() => onDeleteBlock(block.id)}
+          onMoveUp={idx > 0 ? () => onMoveBlock(block.id, -1) : undefined}
+          onMoveDown={idx < (form.blocks ?? []).length - 1 ? () => onMoveBlock(block.id, 1) : undefined}
           accent={color}
           inputStyle={inputStyle}
         />
