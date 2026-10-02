@@ -1,11 +1,11 @@
 {
-    "version":  "2.1.44",
-    "notes":  "Revision a fondo de todos los paneles: Panel CEO, Roles, Admin, Contador, Programacion, Proyectos, Diseno, Secretaria, reportes, Hilos, Anuncios, Calendario y Configuracion.",
-    "pub_date":  "2026-10-01T21:37:20Z",
+    "version":  "2.1.45",
+    "notes":  "Actualizador nuevo:\n- Progreso real con velocidad y tiempo restante\n- Novedades completas, Mas tarde y Omitir esta version\n- Buscar actualizaciones desde Configuracion\n- Errores visibles con Reintentar\nInstalador con la marca de moon Studios.",
+    "pub_date":  "2026-10-01T22:04:31Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRMDZrZG4yMDRUNDhKc1pNTlFqS2c0b05NTVRUa0VkenNwUm9XN29NUnNKWGNDTVpzcEQrQ2dFQ2czSEhEUHIyYU4xUTJDTjQ4b0ZmMnNVTWhWRUVBT2ttY2hEcWYvcGc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwOTA4NjM5CWZpbGU6bW9vbiBTdHVkaW9zXzIuMS40NF94NjQtc2V0dXAuZXhlCjQzbG9hM1phVktaTkRFUXpScXVFckk3d2NodmE4LytzUGVsc3BxQnJkRnpLMURmbDQwTmdvSzcwc3NkUFV0Mnpja3VyaE5PbSt4VGRDV1BoS2tXTUF3PT0K",
-                                             "url":  "https://github.com/pandita1589/moon-Studios-Dashboard/releases/download/v2.1.44/moon.Studios_2.1.44_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRMDZrZG4yMDRUNHhrdkcrekhzSVZIN2JvM1Y4aVk3VFF3dyswWi9YSlVibVpQcmdxQTFOYlRuRStuTFhOTCtUSHVDdXRMM0VQTmtzcUNPU0tIR2x0bzBoM1U1WUZYUVFzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwOTEwMjcwCWZpbGU6bW9vbiBTdHVkaW9zXzIuMS40NV94NjQtc2V0dXAuZXhlCjk2SHFYNDN4OVJzYWI5RGc1WVRCanFubTkyeWpleUhNSC9oaitsamwxV0xZN2VkUEdmQjc1MTZFWWFXMytNZFBzRmMwNTBIL2V1VEpIYnpPNDduZURRPT0K",
+                                             "url":  "https://github.com/pandita1589/moon-Studios-Dashboard/releases/download/v2.1.45/moon.Studios_2.1.45_x64-setup.exe"
                                          }
                   }
 }
