@@ -26,6 +26,7 @@ import PanelSecretaria from '@/components/PanelSecretaria';
 import TitleBar from '@/components/TitleBar';
 import UpdateNotifier from '@/components/UpdateNotifier';
 import { Toaster } from 'sonner';
+import { interceptarEnlacesExternos } from '@/lib/escritorio';
 
 // Hook para detectar Tauri
 const useIsTauri = () => {
@@ -64,6 +65,8 @@ const PermisoRoute: React.FC<{ children: React.ReactNode; permiso: Permission }>
 
 function App() {
   const isTauri = useIsTauri();
+  // En la app de escritorio, los enlaces externos se abrían dentro de la ventana.
+  React.useEffect(() => interceptarEnlacesExternos(), []);
   const titleBarHeight = isTauri ? 42 : 0;
 
   // Exponer el offset del TitleBar como variable CSS global.

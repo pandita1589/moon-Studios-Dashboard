@@ -12,6 +12,7 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { pedirPermisoNotificaciones } from '@/lib/escritorio';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSettings } from '@/contexts/SettingsContext';
 import {
@@ -1593,7 +1594,7 @@ const TabContent: React.FC<{ activeTab: TabKey; props: any }> = ({ activeTab, pr
             <div style={cardStyle}>
               <div style={sectionTitle}>Preferencias adicionales</div>
               <Row label="Notificaciones de escritorio" desc="Alertas del sistema operativo" icon={Monitor} color="#60a5fa"
-                checked={desktopNotifs} onChange={v => { setDesktopNotifs(v); updateSettings({ desktopNotifs: v }); showMsg('success', v ? 'Activadas' : 'Desactivadas'); }} bd={bd} />
+                checked={desktopNotifs} onChange={v => { setDesktopNotifs(v); updateSettings({ desktopNotifs: v }); if (v) void pedirPermisoNotificaciones().then(ok => showMsg(ok ? 'success' : 'error', ok ? 'Activadas: te avisaremos aunque el portal esté en segundo plano' : 'El sistema no dio permiso para mostrar notificaciones')); else showMsg('success', 'Desactivadas'); }} bd={bd} />
               <Row label="Contador en ícono" desc="Número de notificaciones pendientes" icon={Bell} color="#a78bfa"
                 checked={badgeCount} onChange={v => { setBadgeCount(v); updateSettings({ badgeCount: v }); showMsg('success', 'Actualizado'); }} last bd={bd} />
               <div style={{ paddingTop: 12 }}>

@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { collection, query, where, onSnapshot, orderBy, limit } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { playNotificationSound } from '@/lib/notificationSound';
+import { notificarSistema, enHorasDeSilencio } from '@/lib/escritorio';
 import type { SoundType } from '@/lib/notificationSound';
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
@@ -25,6 +26,10 @@ interface UseNotificationsOptions {
   uid:               string | undefined;
   /** Mensajes de contacto de las webs: las reglas solo dejan leerlos a CEO y Administración. */
   puedeVerMensajeria?: boolean;
+  /** Ajuste "Notificaciones de escritorio": aviso del sistema (Windows o el navegador). */
+  escritorio?:       boolean;
+  /** Horas de silencio: ni sonido ni aviso del sistema entre `desde` y `hasta` ('HH:mm'). */
+  silencio?:         { activo: boolean; desde?: string; hasta?: string };
   soundType:         SoundType;
   soundVolume:       number;
   muted:             boolean;
@@ -77,6 +82,8 @@ export const claveMiRespuesta = (uid: string, hiloId: string) => `hilos_mi_respu
 export function useNotifications({
   uid,
   puedeVerMensajeria = false,
+  escritorio = false,
+  silencio,
   soundType,
   soundVolume,
   muted,
@@ -146,8 +153,17 @@ export function useNotifications({
     const newOnes = notifications.filter(n => !knownIdsRef.current.has(n.id));
     if (newOnes.length > 0) {
       newOnes.forEach(n => knownIdsRef.current.add(n.id));
-      if (!muted) {
+      // Antes las horas de silencio y "Notificaciones de escritorio" se
+      // guardaban en Configuración pero nada las leía.
+      const callado = !!silencio?.activo && enHorasDeSilencio(silencio.desde, silencio.hasta);
+      if (!muted && !callado) {
         playNotificationSound(soundType, soundVolume);
+      }
+      // Aviso del sistema solo si no estás mirando el portal.
+      if (escritorio && !callado && (document.hidden || !document.hasFocus())) {
+        const n = newOnes[0];
+        const extra = newOnes.length > 1 ? ` (+${newOnes.length - 1} más)` : '';
+        void notificarSistema(`${n.title}${extra}`, n.preview || 'moon Studios');
       }
     }
   }, [notifications]); // eslint-disable-line react-hooks/exhaustive-deps

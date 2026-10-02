@@ -1127,6 +1127,8 @@ const DashboardLayout: React.FC = () => {
     useNotifications({
       uid: currentUser?.uid,
       puedeVerMensajeria: puede('admin'),
+      escritorio: settings.desktopNotifs !== false,
+      silencio: { activo: !!settings.quietHoursEnabled, desde: settings.quietFrom, hasta: settings.quietTo },
       soundType: settings.notificationSound ?? 'default',
       soundVolume: settings.notificationVolume ?? 0.7,
       muted: settings.notificationsMuted ?? false,
@@ -1139,6 +1141,12 @@ const DashboardLayout: React.FC = () => {
     });
 
   const unreadMails = notifications.filter(n => n.category === 'email' && !readIds.has(n.id)).length;
+
+  // Ajuste "Contador en el título": "(3) moon Studios — Portal Oficial".
+  useEffect(() => {
+    const base = document.title.replace(/^\(\d+\)\s*/, '');
+    document.title = settings.badgeCount !== false && unreadCount > 0 ? `(${unreadCount}) ${base}` : base;
+  }, [unreadCount, settings.badgeCount]);
   const initials = (userProfile?.displayName ?? 'U').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
 
   useEffect(() => { if (!loading && !currentUser) navigate('/'); }, [currentUser, loading, navigate]);

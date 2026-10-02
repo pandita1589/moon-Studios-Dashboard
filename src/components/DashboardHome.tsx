@@ -1714,7 +1714,8 @@ const DashboardHome: React.FC = () => {
         <div
           onClick={() => setLightboxOpen(false)}
           style={{
-            position: 'fixed', inset: 0,
+            // Debajo de la barra de título de la app de escritorio, no encima.
+            position: 'fixed', inset: 0, top: 'var(--titlebar-offset, 0px)',
             background: 'rgba(0,0,0,0.96)', backdropFilter: 'blur(28px)',
             zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center',
             cursor: 'zoom-out', animation: 'fadeIn 0.22s ease',

@@ -9,6 +9,7 @@ import {
   getDocs, deleteField, setDoc,
   arrayUnion,
 } from 'firebase/firestore';
+import { urlPublica, abrirExterno } from '@/lib/escritorio';
 import { claveMiRespuesta } from '@/hooks/useNotifications';
 import { motion, AnimatePresence, useScroll, useSpring } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -611,11 +612,11 @@ const HilosComponent: React.FC = () => {
       a.href = url; a.download = att.name;
       document.body.appendChild(a); a.click(); a.remove();
       URL.revokeObjectURL(url);
-    } catch { window.open(att.url, '_blank'); }
+    } catch { void abrirExterno(att.url); }
   }, []);
 
   const getShareUrl = useCallback((hiloId: string) =>
-    `${window.location.origin}/hilos/observe/${hiloId}`, []);
+    urlPublica(`/hilos/observe/${hiloId}`), []);
 
   const copyLink = useCallback((hiloId: string) => {
     navigator.clipboard.writeText(getShareUrl(hiloId));
