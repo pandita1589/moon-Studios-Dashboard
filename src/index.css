@@ -752,3 +752,116 @@ html.light [style*="background-color: rgb(15, 15, 15)"] { background: #ffffff !i
   .overflow-hidden:has(> * > .grid.grid-cols-12),
   .overflow-hidden:has(> * > * > .grid.grid-cols-12) { overflow-x: auto !important; }
 }
+
+
+/* ========== MODO CLARO: ACENTOS LEGIBLES ==========
+   Los colores de acento pastel (#34d399, #fb923c, #60a5fa, #f472b6…) están
+   pensados para fondo oscuro. En claro, como texto sobre blanco daban 1,6 a
+   2,4:1 de contraste: "Tareas Activas", los niveles del Panel Admin, los
+   roles… Se oscurecen solo cuando son color de texto (también en íconos, que
+   usan currentColor); los fondos suaves con transparencia no se tocan.
+   El selector exige "color:" al inicio o tras "; " para no confundirlo con
+   background-color. */
+html.light [style^="color: rgb(52, 211, 153)"],
+html.light [style*="; color: rgb(52, 211, 153)"],
+html.light .text-emerald-400,
+html.light .text-emerald-300 { color: #047857 !important; }
+html.light [style^="color: rgb(74, 222, 128)"],
+html.light [style*="; color: rgb(74, 222, 128)"],
+html.light .text-green-400,
+html.light .text-green-300 { color: #15803d !important; }
+html.light [style^="color: rgb(251, 146, 60)"],
+html.light [style*="; color: rgb(251, 146, 60)"],
+html.light .text-orange-400,
+html.light .text-orange-300 { color: #c2410c !important; }
+html.light [style^="color: rgb(245, 158, 11)"],
+html.light [style*="; color: rgb(245, 158, 11)"],
+html.light .text-amber-500 { color: #b45309 !important; }
+html.light [style^="color: rgb(251, 191, 36)"],
+html.light [style*="; color: rgb(251, 191, 36)"],
+html.light .text-amber-400,
+html.light .text-amber-300 { color: #b45309 !important; }
+html.light [style^="color: rgb(250, 204, 21)"],
+html.light [style*="; color: rgb(250, 204, 21)"],
+html.light .text-yellow-400,
+html.light .text-yellow-300 { color: #a16207 !important; }
+html.light [style^="color: rgb(96, 165, 250)"],
+html.light [style*="; color: rgb(96, 165, 250)"],
+html.light .text-blue-400,
+html.light .text-blue-300 { color: #2563eb !important; }
+html.light [style^="color: rgb(56, 189, 248)"],
+html.light [style*="; color: rgb(56, 189, 248)"],
+html.light .text-sky-400,
+html.light .text-sky-300 { color: #0369a1 !important; }
+html.light [style^="color: rgb(34, 211, 238)"],
+html.light [style*="; color: rgb(34, 211, 238)"],
+html.light .text-cyan-400,
+html.light .text-cyan-300 { color: #0e7490 !important; }
+html.light [style^="color: rgb(45, 212, 191)"],
+html.light [style*="; color: rgb(45, 212, 191)"],
+html.light .text-teal-400,
+html.light .text-teal-300 { color: #0f766e !important; }
+html.light [style^="color: rgb(129, 140, 248)"],
+html.light [style*="; color: rgb(129, 140, 248)"],
+html.light .text-indigo-400 { color: #4f46e5 !important; }
+html.light [style^="color: rgb(165, 180, 252)"],
+html.light [style*="; color: rgb(165, 180, 252)"],
+html.light .text-indigo-300 { color: #4f46e5 !important; }
+html.light [style^="color: rgb(167, 139, 250)"],
+html.light [style*="; color: rgb(167, 139, 250)"],
+html.light .text-violet-400,
+html.light .text-violet-300 { color: #7c3aed !important; }
+html.light [style^="color: rgb(192, 132, 252)"],
+html.light [style*="; color: rgb(192, 132, 252)"],
+html.light .text-purple-400,
+html.light .text-purple-300 { color: #9333ea !important; }
+html.light [style^="color: rgb(196, 181, 253)"],
+html.light [style*="; color: rgb(196, 181, 253)"] { color: #7c3aed !important; }
+html.light [style^="color: rgb(244, 114, 182)"],
+html.light [style*="; color: rgb(244, 114, 182)"],
+html.light .text-pink-400,
+html.light .text-pink-300 { color: #db2777 !important; }
+html.light [style^="color: rgb(251, 113, 133)"],
+html.light [style*="; color: rgb(251, 113, 133)"],
+html.light .text-rose-400,
+html.light .text-rose-300 { color: #e11d48 !important; }
+html.light [style^="color: rgb(248, 113, 113)"],
+html.light [style*="; color: rgb(248, 113, 113)"],
+html.light .text-red-400,
+html.light .text-red-300 { color: #dc2626 !important; }
+html.light [style^="color: rgb(156, 163, 175)"],
+html.light [style*="; color: rgb(156, 163, 175)"],
+html.light .text-gray-400 { color: #4b5563 !important; }
+html.light [style^="color: rgb(148, 163, 184)"],
+html.light [style*="; color: rgb(148, 163, 184)"],
+html.light .text-slate-400 { color: #475569 !important; }
+html.light [style^="color: rgb(212, 212, 216)"],
+html.light [style*="; color: rgb(212, 212, 216)"] { color: rgba(0,0,0,0.7) !important; }
+
+/* Grises del modo claro de la capa anterior, un poco más firmes */
+html.light .text-zinc-600 { color: rgba(0,0,0,0.5) !important; }
+html.light .text-zinc-700, html.light .text-zinc-800 { color: rgba(0,0,0,0.42) !important; }
+
+/* ========== MODO OSCURO: GRISES DEMASIADO APAGADOS ==========
+   text-zinc-600/700 sobre negro daban ~2,4:1: etiquetas como "Activos hoy",
+   "Completadas" o "API Luna NET" casi no se leían. */
+html:not(.light) .text-zinc-600 { color: #7a7a84 !important; }
+html:not(.light) .text-zinc-700 { color: #63636d !important; }
+
+/* Modo oscuro: textos en línea con blanco al 20-30 % (pestañas inactivas de
+   Admin, Roles y Secretaría, ayudas de los formularios de Webs…) daban
+   1,8 a 2,6:1 de contraste. Solo cuando son color de texto. */
+html:not(.light) [style^="color: rgba(255, 255, 255, 0.2"],
+html:not(.light) [style*="; color: rgba(255, 255, 255, 0.2"] { color: rgba(255,255,255,0.42) !important; }
+html:not(.light) [style^="color: rgba(255, 255, 255, 0.3"],
+html:not(.light) [style*="; color: rgba(255, 255, 255, 0.3"] { color: rgba(255,255,255,0.48) !important; }
+
+/* Modo oscuro: grises fijos muy oscuros usados como color de texto
+   (#333, #3f3f46, #444, #52525b, #555 — p. ej. las pestañas inactivas de
+   Panel Admin, Gestión Roles y Secretaría) casi no se veían sobre negro.
+   En claro no se tocan: ahí sí contrastan. */
+html:not(.light) [style^="color: rgb(51, 51, 51)"],  html:not(.light) [style*="; color: rgb(51, 51, 51)"],
+html:not(.light) [style^="color: rgb(63, 63, 70)"],  html:not(.light) [style*="; color: rgb(63, 63, 70)"],
+html:not(.light) [style^="color: rgb(68, 68, 68)"],  html:not(.light) [style*="; color: rgb(68, 68, 68)"] { color: #74747c !important; }
+html:not(.light) [style^="color: rgb(82, 82, 91)"],  html:not(.light) [style*="; color: rgb(82, 82, 91)"],
+html:not(.light) [style^="color: rgb(85, 85, 85)"],  html:not(.light) [style*="; color: rgb(85, 85, 85)"] { color: #85858d !important; }

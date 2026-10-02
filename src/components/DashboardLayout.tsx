@@ -53,18 +53,18 @@ const GLOBAL_STYLES = `
     --border-main: rgba(255,255,255,0.06);
     --border-header: rgba(255,255,255,0.05);
     --text-primary: rgba(255,255,255,0.85);
-    --text-muted: rgba(255,255,255,0.3);
+    --text-muted: rgba(255,255,255,0.46);
     --nav-active-bg: rgba(255,255,255,0.07);
     --nav-hover-bg: rgba(255,255,255,0.04);
     --sidebar-card-bg: rgba(255,255,255,0.03);
     --sidebar-card-border: rgba(255,255,255,0.06);
     --btn-bg: rgba(255,255,255,0.03);
     --btn-border: rgba(255,255,255,0.06);
-    --btn-color: rgba(255,255,255,0.3);
+    --btn-color: rgba(255,255,255,0.46);
     --btn-hover-bg: rgba(255,255,255,0.07);
     --btn-hover-border: rgba(255,255,255,0.12);
     --btn-hover-color: rgba(255,255,255,0.75);
-    --icon-color: rgba(255,255,255,0.3);
+    --icon-color: rgba(255,255,255,0.46);
     --icon-active: rgba(255,255,255,0.9);
     --icon-bg-active: rgba(255,255,255,0.07);
     --icon-border-active: rgba(255,255,255,0.1);
@@ -97,8 +97,8 @@ const GLOBAL_STYLES = `
     --overlay-border: rgba(255,255,255,0.08);
     --content-primary: rgba(255,255,255,0.85);
     --content-secondary: rgba(255,255,255,0.55);
-    --content-tertiary: rgba(255,255,255,0.35);
-    --content-quaternary: rgba(255,255,255,0.2);
+    --content-tertiary: rgba(255,255,255,0.45);
+    --content-quaternary: rgba(255,255,255,0.42);
     --active-panel-bg: rgba(255,255,255,0.1);
     --active-panel-border: rgba(255,255,255,0.15);
     --avatar-ring-hover: rgba(255,255,255,0.2);
@@ -132,7 +132,7 @@ const GLOBAL_STYLES = `
     --notif-count-bg: rgba(255,255,255,0.1);
     --mobile-nav-active-bg: rgba(255,255,255,0.08);
     --mobile-nav-icon-active: rgba(255,255,255,0.9);
-    --mobile-nav-icon: rgba(255,255,255,0.3);
+    --mobile-nav-icon: rgba(255,255,255,0.46);
     --mobile-nav-label-active: rgba(255,255,255,0.75);
     --mobile-nav-label: rgba(255,255,255,0.28);
   }
@@ -151,11 +151,11 @@ const GLOBAL_STYLES = `
     --sidebar-card-border: rgba(0,0,0,0.07);
     --btn-bg: rgba(0,0,0,0.04);
     --btn-border: rgba(0,0,0,0.08);
-    --btn-color: rgba(0,0,0,0.4);
+    --btn-color: rgba(0,0,0,0.56);
     --btn-hover-bg: rgba(0,0,0,0.07);
     --btn-hover-border: rgba(0,0,0,0.14);
     --btn-hover-color: rgba(0,0,0,0.75);
-    --icon-color: rgba(0,0,0,0.35);
+    --icon-color: rgba(0,0,0,0.55);
     --icon-active: rgba(0,0,0,0.85);
     --icon-bg-active: rgba(0,0,0,0.06);
     --icon-border-active: rgba(0,0,0,0.1);
@@ -188,8 +188,8 @@ const GLOBAL_STYLES = `
     --overlay-border: rgba(0,0,0,0.08);
     --content-primary: rgba(0,0,0,0.85);
     --content-secondary: rgba(0,0,0,0.55);
-    --content-tertiary: rgba(0,0,0,0.35);
-    --content-quaternary: rgba(0,0,0,0.2);
+    --content-tertiary: rgba(0,0,0,0.5);
+    --content-quaternary: rgba(0,0,0,0.46);
     --active-panel-bg: rgba(0,0,0,0.08);
     --active-panel-border: rgba(0,0,0,0.12);
     --avatar-ring-hover: rgba(0,0,0,0.15);
@@ -223,7 +223,7 @@ const GLOBAL_STYLES = `
     --notif-count-bg: rgba(0,0,0,0.06);
     --mobile-nav-active-bg: rgba(0,0,0,0.07);
     --mobile-nav-icon-active: rgba(0,0,0,0.85);
-    --mobile-nav-icon: rgba(0,0,0,0.35);
+    --mobile-nav-icon: rgba(0,0,0,0.55);
     --mobile-nav-label-active: rgba(0,0,0,0.7);
     --mobile-nav-label: rgba(0,0,0,0.3);
   }
@@ -1051,14 +1051,15 @@ const DashboardLayout: React.FC = () => {
     root.style.setProperty('--border-main',        isLight ? 'rgba(0,0,0,0.08)'       : 'rgba(255,255,255,0.06)');
     root.style.setProperty('--border-header',      isLight ? 'rgba(0,0,0,0.07)'       : 'rgba(255,255,255,0.05)');
     root.style.setProperty('--text-primary',       isLight ? 'rgba(0,0,0,0.85)'       : 'rgba(255,255,255,0.85)');
-    root.style.setProperty('--text-muted',         isLight ? 'rgba(0,0,0,0.4)'        : 'rgba(255,255,255,0.3)');
+    // 0.3/0.4 daban ~2.4:1 de contraste: el menú y las etiquetas casi no se leían.
+    root.style.setProperty('--text-muted',         isLight ? 'rgba(0,0,0,0.56)'       : 'rgba(255,255,255,0.46)');
     root.style.setProperty('--nav-active-bg',      isLight ? 'rgba(0,0,0,0.06)'       : 'rgba(255,255,255,0.07)');
     root.style.setProperty('--nav-hover-bg',       isLight ? 'rgba(0,0,0,0.03)'       : 'rgba(255,255,255,0.04)');
     root.style.setProperty('--sidebar-card-bg',    isLight ? 'rgba(0,0,0,0.03)'       : 'rgba(255,255,255,0.03)');
     root.style.setProperty('--sidebar-card-border',isLight ? 'rgba(0,0,0,0.07)'       : 'rgba(255,255,255,0.06)');
     root.style.setProperty('--btn-bg',             isLight ? 'rgba(0,0,0,0.04)'       : 'rgba(255,255,255,0.03)');
     root.style.setProperty('--btn-border',         isLight ? 'rgba(0,0,0,0.08)'       : 'rgba(255,255,255,0.06)');
-    root.style.setProperty('--btn-color',          isLight ? 'rgba(0,0,0,0.4)'        : 'rgba(255,255,255,0.3)');
+    root.style.setProperty('--btn-color',          isLight ? 'rgba(0,0,0,0.56)'       : 'rgba(255,255,255,0.46)');
     root.style.setProperty('--btn-hover-bg',       isLight ? 'rgba(0,0,0,0.07)'       : 'rgba(255,255,255,0.07)');
     root.style.setProperty('--btn-hover-border',   isLight ? 'rgba(0,0,0,0.14)'       : 'rgba(255,255,255,0.12)');
     root.style.setProperty('--btn-hover-color',    isLight ? 'rgba(0,0,0,0.75)'       : 'rgba(255,255,255,0.75)');

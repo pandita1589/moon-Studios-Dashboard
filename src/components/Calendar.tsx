@@ -51,7 +51,7 @@ const injectThemeVars = (isDark: boolean, accentColor: string) => {
       --cal-text-primary:     ${dark ? '#f1f5f9'              : '#0f172a'};
       --cal-text-secondary:   ${dark ? '#cbd5e1'              : '#334155'};
       --cal-text-muted:       ${dark ? '#64748b'              : '#64748b'};
-      --cal-text-quaternary:  ${dark ? '#334155'              : '#cbd5e1'};
+      --cal-text-quaternary:  ${dark ? '#5b6679'              : '#8391a7'};
       --cal-holiday-bg:       ${dark ? 'rgba(251,191,36,0.10)' : 'rgba(251,146,60,0.10)'};
       --cal-holiday-border:   ${dark ? 'rgba(251,191,36,0.22)' : 'rgba(251,146,60,0.22)'};
       --cal-holiday-color:    ${dark ? '#fbbf24'              : '#ea580c'};

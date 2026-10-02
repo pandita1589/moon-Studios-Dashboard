@@ -133,7 +133,7 @@ function applySettingsToDom(s: Settings) {
     root.style.setProperty('--border-main',   'rgba(255,255,255,0.06)');
     root.style.setProperty('--border-header', 'rgba(255,255,255,0.05)');
     root.style.setProperty('--text-primary',  '#ffffff');
-    root.style.setProperty('--text-muted',    'rgba(255,255,255,0.45)');
+    root.style.setProperty('--text-muted',    'rgba(255,255,255,0.46)');
     root.style.setProperty('--sidebar-card-bg','rgba(255,255,255,0.03)');
     root.style.setProperty('--input-bg',      'rgba(255,255,255,0.04)');
     root.style.setProperty('--s-a02', 'rgba(255,255,255,0.02)');
@@ -169,7 +169,7 @@ function applySettingsToDom(s: Settings) {
     root.style.setProperty('--border-main',   'rgba(0,0,0,0.08)');
     root.style.setProperty('--border-header', 'rgba(0,0,0,0.07)');
     root.style.setProperty('--text-primary',  '#18181b');
-    root.style.setProperty('--text-muted',    'rgba(0,0,0,0.50)');
+    root.style.setProperty('--text-muted',    'rgba(0,0,0,0.56)');
     root.style.setProperty('--sidebar-card-bg','#ffffff');
     root.style.setProperty('--input-bg',      'rgba(0,0,0,0.03)');
     root.style.setProperty('--s-a02', 'rgba(0,0,0,0.02)');

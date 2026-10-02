@@ -736,7 +736,7 @@ export default function PanelProgramacion() {
             <button
               onClick={() => openProjectModal()}
               className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-light transition-opacity hover:opacity-90"
-              style={{ background: 'var(--text-primary)', color: 'var(--sidebar-card-bg)' }}
+              style={{ background: 'var(--text-primary)', color: 'var(--bg-sidebar)' }}
             >
               <Plus className="w-4 h-4" strokeWidth={2} /> Proyecto
             </button>
@@ -1117,7 +1117,7 @@ export default function PanelProgramacion() {
               <button
                 onClick={openTaskModal}
                 className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-light ml-auto"
-                style={{ background: 'var(--text-primary)', color: 'var(--sidebar-card-bg)' }}
+                style={{ background: 'var(--text-primary)', color: 'var(--bg-sidebar)' }}
               >
                 <Plus className="w-3.5 h-3.5" strokeWidth={2} /> Nueva tarea
               </button>
@@ -1208,7 +1208,7 @@ export default function PanelProgramacion() {
               <button
                 onClick={openChangeModal}
                 className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-light ml-auto"
-                style={{ background: 'var(--text-primary)', color: 'var(--sidebar-card-bg)' }}
+                style={{ background: 'var(--text-primary)', color: 'var(--bg-sidebar)' }}
               >
                 <Plus className="w-3.5 h-3.5" strokeWidth={2} /> Release
               </button>

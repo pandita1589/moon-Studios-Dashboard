@@ -183,7 +183,7 @@ const GlobalStyles = () => (
       --dh-border-hover: rgba(255,255,255,0.13);
       --dh-text:         #f4f4f5;
       --dh-text-2:       #a1a1aa;
-      --dh-text-3:       #52525b;
+      --dh-text-3:       #75757f;
       --dh-accent:       #ffffff;
       --dh-accent-soft:  rgba(255,255,255,0.14);
       --dh-accent-dim:   rgba(255,255,255,0.05);
@@ -212,7 +212,7 @@ const GlobalStyles = () => (
       --dh-border-hover: rgba(0,0,0,0.14);
       --dh-text:         #18181b;
       --dh-text-2:       #71717a;
-      --dh-text-3:       #a1a1aa;
+      --dh-text-3:       #6b6b75;
       --dh-accent:       #18181b;
       --dh-accent-soft:  rgba(0,0,0,0.12);
       --dh-accent-dim:   rgba(0,0,0,0.04);

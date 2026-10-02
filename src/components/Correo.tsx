@@ -380,7 +380,7 @@ const CorreoComponent: React.FC = () => {
           --correo-border: hsl(var(--border));
           --correo-text-primary: hsl(var(--foreground));
           --correo-text-secondary: hsl(var(--muted-foreground));
-          --correo-text-muted: hsl(var(--muted-foreground) / 0.7);
+          --correo-text-muted: hsl(var(--muted-foreground));
           --correo-input-bg: hsl(var(--muted));
           --correo-selected-bg: hsl(var(--accent));
           --correo-unread-bg: hsl(var(--card));
@@ -403,7 +403,7 @@ const CorreoComponent: React.FC = () => {
           --correo-border: #e4e4e7;
           --correo-text-primary: #09090b;
           --correo-text-secondary: #71717a;
-          --correo-text-muted: #a1a1aa;
+          --correo-text-muted: #6b6b75;
           --correo-input-bg: #f4f4f5;
           --correo-selected-bg: #f0f0f1;
           --correo-unread-bg: #fafafa;
