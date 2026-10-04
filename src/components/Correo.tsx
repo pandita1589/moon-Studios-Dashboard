@@ -1069,7 +1069,7 @@ const CorreoComponent: React.FC = () => {
 
       {/* ── File viewer ── */}
       <Dialog open={showViewer} onOpenChange={setShowViewer}>
-        <DialogContent
+        <DialogContent showCloseButton={false}
           className="p-0 overflow-hidden"
           style={{
             background: 'var(--correo-compose-bg)',

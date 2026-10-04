@@ -24,7 +24,7 @@ import {
   Settings, LogOut, Moon, Crown, ChevronLeft, ChevronRight,
   AlertCircle, X, Mail, MessagesSquare, GitBranch, MessageSquare,
   Calculator, Globe, Menu, Code2, Palette, FileText, UserCog, Users, ShieldCheck,
-  CheckCheck, Inbox, Trash2, BellOff, FolderKanban
+  CheckCheck, Inbox, Trash2, BellOff, FolderKanban, ListTodo
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -32,13 +32,13 @@ import type { NotifCategory } from '@/hooks/useNotifications';
 
 // ── Categorías ────────────────────────────────────────────────────────────────
 const CATEGORY_ICON: Record<NotifCategory, React.FC<any>> = {
-  announcement: Megaphone, email: Mail, thread: GitBranch, message: MessageSquare,
+  announcement: Megaphone, email: Mail, thread: GitBranch, message: MessageSquare, task: ListTodo,
 };
 const CATEGORY_LABEL: Record<NotifCategory, string> = {
-  announcement: 'Anuncio', email: 'Correo', thread: 'Hilo', message: 'Mensaje',
+  announcement: 'Anuncio', email: 'Correo', thread: 'Hilo', message: 'Mensaje', task: 'Tarea',
 };
 const CATEGORY_COLOR: Record<NotifCategory, string> = {
-  announcement: '#a78bfa', email: '#60a5fa', thread: '#34d399', message: '#fb923c',
+  announcement: '#a78bfa', email: '#60a5fa', thread: '#34d399', message: '#fb923c', task: '#fbbf24',
 };
 
 // ── Estilos globales ──────────────────────────────────────────────────────────
@@ -1137,6 +1137,7 @@ const DashboardLayout: React.FC = () => {
         email: settings.notifyEmails ?? true,
         thread: settings.notifyThreads ?? true,
         message: settings.notifyMessages ?? true,
+        task: settings.notifyTasks ?? true,
       },
     });
 
@@ -1188,6 +1189,7 @@ const DashboardLayout: React.FC = () => {
   const navItems = [
     { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, show: true },
     { path: '/dashboard/calendar', label: 'Calendario', icon: Calendar, show: true },
+    { path: '/dashboard/tareas', label: 'Mis tareas', icon: ListTodo, show: true },
     { path: '/dashboard/discord', label: 'Discord Bot', icon: Bot, show: true },
     { path: '/dashboard/announcements', label: 'Anuncios', icon: Megaphone, show: true },
     { path: '/dashboard/correo', label: 'Correo', icon: Mail, show: true, badge: unreadMails },
@@ -1208,10 +1210,10 @@ const DashboardLayout: React.FC = () => {
   ].filter(i => i.show);
 
   // grupos de nav
-  const principalItems = navItems.filter(i => ['/dashboard', '/dashboard/calendar', '/dashboard/announcements'].includes(i.path));
+  const principalItems = navItems.filter(i => ['/dashboard', '/dashboard/calendar', '/dashboard/tareas', '/dashboard/announcements'].includes(i.path));
   const commsItems = navItems.filter(i => ['/dashboard/correo', '/dashboard/hilos', '/dashboard/mensajeria', '/dashboard/discord'].includes(i.path));
   const gestionItems = navItems.filter(i => ![
-    '/dashboard', '/dashboard/calendar', '/dashboard/announcements',
+    '/dashboard', '/dashboard/calendar', '/dashboard/tareas', '/dashboard/announcements',
     '/dashboard/correo', '/dashboard/hilos', '/dashboard/mensajeria',
     '/dashboard/discord', '/dashboard/settings',
   ].includes(i.path));

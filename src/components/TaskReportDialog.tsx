@@ -1,56 +1,36 @@
 /**
  * TaskReportDialog.tsx
- * Dialog para que Empleados y Administración reporten el estado de una tarea.
- * - Selección de estado: Completado / No Completada / En Desarrollo
- * - Campo de comentario (siempre)
- * - Campo de razón (obligatorio si "No Completada")
- * - Subida de archivos/capturas a Supabase (hasta 5 archivos, 10 MB c/u)
- * - Soporte edición del propio reporte previo
+ * Diálogo para que cada persona reporte cómo va una tarea.
+ * - Estado: Completada / En desarrollo / No completada
+ * - Comentario (siempre) y motivo (obligatorio si "No completada")
+ * - Hasta 5 archivos de 10 MB en Supabase
+ * - Edita el propio reporte si ya existía
+ * Al guardar avisa en la campana a quien creó la tarea.
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Label }  from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import {
   CheckCircle2, XCircle, Loader2, Upload, Trash2,
-  FileImage, FileText, File, AlertCircle, Clock
+  FileImage, FileText, File, AlertCircle, Clock, Send, ExternalLink,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { uploadReportFile, deleteReportFile } from '@/lib/supabaseclient';
 import {
   createTaskReport, updateTaskReport, getMyReport,
   type TaskReport, type ReportStatus, type Attachment,
 } from '@/lib/taskReports';
-import type { Task, UserProfile } from '@/types';
+import { avisarTarea } from '@/lib/tareas';
+import { abrirExterno } from '@/lib/escritorio';
+import type { UserProfile } from '@/types';
+import '@/components/tareas/tareas.css';
 
 // ── Configuración de estados ──────────────────────────────────────────────────
 
-const STATUS_OPTIONS: { value: ReportStatus; label: string; icon: React.ReactNode; color: string; bg: string; border: string }[] = [
-  {
-    value: 'completed',
-    label: 'Completado',
-    icon: <CheckCircle2 className="w-4 h-4" />,
-    color: 'text-green-400',
-    bg:    'bg-green-950/60',
-    border:'border-green-700',
-  },
-  {
-    value: 'in-progress',
-    label: 'En Desarrollo',
-    icon: <Clock className="w-4 h-4" />,
-    color: 'text-blue-400',
-    bg:    'bg-blue-950/60',
-    border:'border-blue-700',
-  },
-  {
-    value: 'not-completed',
-    label: 'No Completada',
-    icon: <XCircle className="w-4 h-4" />,
-    color: 'text-red-400',
-    bg:    'bg-red-950/60',
-    border:'border-red-700',
-  },
+const STATUS_OPTIONS: { value: ReportStatus; label: string; ayuda: string; icon: React.ReactNode; color: string }[] = [
+  { value: 'completed',     label: 'Completada',    ayuda: 'Terminé la tarea',        icon: <CheckCircle2 size={16} />, color: '#34d399' },
+  { value: 'in-progress',   label: 'En desarrollo', ayuda: 'Sigo trabajando en ella', icon: <Clock size={16} />,        color: '#60a5fa' },
+  { value: 'not-completed', label: 'No completada', ayuda: 'No pude completarla',     icon: <XCircle size={16} />,      color: '#f87171' },
 ];
 
 const MAX_FILES    = 5;
@@ -65,9 +45,9 @@ const ALLOWED_TYPES = [
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function fileIcon(mime: string) {
-  if (mime.startsWith('image/')) return <FileImage className="w-4 h-4 text-zinc-400" />;
-  if (mime === 'application/pdf') return <FileText  className="w-4 h-4 text-red-400"  />;
-  return <File className="w-4 h-4 text-zinc-400" />;
+  if (mime.startsWith('image/')) return <FileImage size={15} />;
+  if (mime === 'application/pdf') return <FileText size={15} style={{ color: '#f87171' }} />;
+  return <File size={15} />;
 }
 
 function msgError(err: unknown): string {
@@ -85,7 +65,8 @@ function formatBytes(b: number) {
 interface TaskReportDialogProps {
   open:        boolean;
   onClose:     () => void;
-  task:        Task;
+  /** Lo único que hace falta de la tarea (sirve el Task del Calendario o una Tarea). */
+  task:        { id: string; title: string; createdBy?: string };
   userProfile: UserProfile;
 }
 
@@ -106,6 +87,7 @@ const TaskReportDialog: React.FC<TaskReportDialogProps> = ({
   const [cargadoPara,  setCargadoPara]  = useState<string | null>(null);
   const [loadError,    setLoadError]    = useState<string | null>(null);
   const [reintento,    setReintento]    = useState(0);
+  const [arrastrando,  setArrastrando]  = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Archivos subidos en esta sesión del diálogo que todavía no están en un
@@ -190,7 +172,7 @@ const TaskReportDialog: React.FC<TaskReportDialogProps> = ({
     }
     const invalid = arr.filter(f => !ALLOWED_TYPES.includes(f.type) || f.size > MAX_FILE_B);
     if (invalid.length) {
-      setError(`Algunos archivos son inválidos (tipo no permitido o > ${MAX_FILE_MB} MB).`);
+      setError(`Algunos archivos no se pueden adjuntar (tipo no permitido o más de ${MAX_FILE_MB} MB).`);
       return;
     }
     setError(null);
@@ -233,7 +215,7 @@ const TaskReportDialog: React.FC<TaskReportDialogProps> = ({
     e.preventDefault();
     if (cargando || loadError) return;
     if (reportStatus === 'not-completed' && !reason.trim()) {
-      setError('Debes indicar la razón por la que no fue completada.');
+      setError('Cuéntanos qué impidió completar la tarea.');
       return;
     }
     setError(null);
@@ -262,9 +244,17 @@ const TaskReportDialog: React.FC<TaskReportDialogProps> = ({
       aBorrar.forEach(url => { deleteReportFile(url).catch(console.error); });
       sesion.current++;
       setCargadoPara(null);
+      // Quien creó la tarea se entera en su campana (si no es uno mismo).
+      if (task.createdBy && task.createdBy !== userProfile.uid) {
+        void avisarTarea('task-report', [task.createdBy], {
+          taskId: task.id, taskTitle: task.title, autorUid: userProfile.uid,
+          autorNombre: userProfile.displayName, estado: reportStatus,
+        });
+      }
+      toast.success(existingReport ? 'Reporte actualizado' : 'Reporte enviado');
       onClose();
     } catch (e) {
-      setError(msgError(e) || 'Error al guardar el reporte.');
+      setError(msgError(e) || 'No se pudo guardar el reporte.');
     } finally {
       setSaving(false);
     }
@@ -272,185 +262,149 @@ const TaskReportDialog: React.FC<TaskReportDialogProps> = ({
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
+  const caja = (color: string, texto: string) => (
+    <div className="tr-aviso" style={{ ['--tr-c' as string]: color }}>
+      <AlertCircle size={15} style={{ color, flexShrink: 0, marginTop: 1 }} />
+      <p>{texto}</p>
+    </div>
+  );
+
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) handleClose(); }}>
-      <DialogContent className="bg-zinc-950 border-zinc-800 max-w-lg">
-        <DialogHeader>
-          <DialogTitle className="text-white font-extralight flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-zinc-400" />
-            {existingReport ? 'Actualizar reporte' : 'Reportar tarea'}
-          </DialogTitle>
-          <p className="text-zinc-500 text-xs font-extralight truncate mt-0.5">
-            {task.title}
-          </p>
-        </DialogHeader>
+      <DialogContent className="tr-acento w-[calc(100vw-2rem)] sm:max-w-[560px] p-0 gap-0">
+        <div className="flex items-start gap-3 px-5 sm:px-6 pt-5 pb-4" style={{ borderBottom: '1px solid var(--tr-linea)' }}>
+          <div className="tr-av tr-av-lg" style={{ borderRadius: 11 }}><Send size={15} /></div>
+          <div className="min-w-0 pr-8">
+            <DialogTitle className="text-[15px] font-normal" style={{ color: 'var(--text-primary)' }}>
+              {existingReport ? 'Actualizar mi reporte' : 'Reportar avance'}
+            </DialogTitle>
+            <DialogDescription className="text-xs mt-0.5 truncate" style={{ color: 'var(--text-muted)' }}>
+              {task.title}
+            </DialogDescription>
+          </div>
+        </div>
 
         {cargando ? (
-          <div className="flex items-center justify-center gap-2 py-10 text-zinc-500">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            <span className="text-xs font-extralight">Cargando reporte…</span>
+          <div className="flex items-center justify-center gap-2 py-14" style={{ color: 'var(--text-muted)' }}>
+            <Loader2 size={16} className="animate-spin" />
+            <span className="text-xs">Cargando tu reporte…</span>
           </div>
         ) : loadError ? (
-          <div className="space-y-4">
-            <div className="flex items-start gap-2 p-3 bg-red-950/40 border border-red-900 rounded-md">
-              <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
-              <p className="text-red-400 text-xs font-extralight">{loadError}</p>
-            </div>
-            <div className="flex gap-2">
-              <Button type="button" variant="ghost" onClick={handleClose}
-                className="flex-1 text-zinc-500 hover:text-white font-extralight">
-                Cerrar
-              </Button>
-              <Button type="button" onClick={() => { setLoadError(null); setReintento(n => n + 1); }}
-                className="flex-1 bg-white text-black hover:bg-zinc-200 font-extralight">
-                Reintentar
-              </Button>
+          <div className="px-5 sm:px-6 py-5 space-y-4">
+            {caja('#f87171', loadError)}
+            <div className="flex gap-2 justify-end">
+              <button type="button" className="tr-btn tr-btn-fantasma" onClick={handleClose}>Cerrar</button>
+              <button type="button" className="tr-btn tr-btn-primario" onClick={() => { setLoadError(null); setReintento(n => n + 1); }}>Reintentar</button>
             </div>
           </div>
         ) : (
-        <form onSubmit={handleSubmit} className="space-y-5 max-h-[70vh] overflow-y-auto pr-1">
+        <form onSubmit={handleSubmit} className="flex flex-col min-h-0">
+          <div className="px-5 sm:px-6 py-5 space-y-5">
 
-          {/* ── Estado ── */}
-          <div className="space-y-2">
-            <Label className="text-zinc-500 font-extralight text-xs uppercase tracking-wider">
-              Estado de la tarea *
-            </Label>
-            <div className="grid grid-cols-3 gap-2">
-              {STATUS_OPTIONS.map(opt => {
-                const sel = reportStatus === opt.value;
-                return (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => { setReportStatus(opt.value); setError(null); }}
-                    className={`flex flex-col items-center gap-2 py-3 px-2 rounded-lg border-2 transition-all duration-150 text-center
-                      ${sel ? `${opt.bg} ${opt.border} ${opt.color}` : 'bg-zinc-900 border-zinc-800 text-zinc-500 hover:border-zinc-700'}`}
-                  >
-                    {opt.icon}
-                    <span className="text-xs font-extralight leading-tight">{opt.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* ── Razón (solo si No Completada) ── */}
-          {reportStatus === 'not-completed' && (
-            <div className="space-y-2">
-              <Label className="text-zinc-500 font-extralight text-xs uppercase tracking-wider">
-                Razón de no completar *
-              </Label>
-              <Textarea
-                value={reason}
-                onChange={e => setReason(e.target.value)}
-                placeholder="Explica qué impidió completar la tarea..."
-                rows={2}
-                className="bg-zinc-900 border-zinc-800 text-white font-extralight text-sm resize-none focus:border-zinc-600"
-              />
-            </div>
-          )}
-
-          {/* ── Comentario ── */}
-          <div className="space-y-2">
-            <Label className="text-zinc-500 font-extralight text-xs uppercase tracking-wider">
-              Comentario / Avance
-            </Label>
-            <Textarea
-              value={comment}
-              onChange={e => setComment(e.target.value)}
-              placeholder="Describe el avance, lo que hiciste, notas relevantes..."
-              rows={3}
-              className="bg-zinc-900 border-zinc-800 text-white font-extralight text-sm resize-none focus:border-zinc-600"
-            />
-          </div>
-
-          {/* ── Adjuntos ── */}
-          <div className="space-y-2">
-            <Label className="text-zinc-500 font-extralight text-xs uppercase tracking-wider">
-              Capturas / Archivos ({attachments.length}/{MAX_FILES})
-            </Label>
-
-            {/* Drop zone */}
-            <div
-              className="relative border border-dashed border-zinc-700 rounded-lg p-4 hover:border-zinc-500 transition-colors cursor-pointer text-center"
-              onClick={() => fileInputRef.current?.click()}
-              onDragOver={e => e.preventDefault()}
-              onDrop={e => { e.preventDefault(); void handleFiles(e.dataTransfer.files); }}
-            >
-              {uploading ? (
-                <div className="flex items-center justify-center gap-2 text-zinc-400">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span className="text-xs font-extralight">Subiendo...</span>
-                </div>
-              ) : (
-                <div className="flex flex-col items-center gap-1.5 text-zinc-600">
-                  <Upload className="w-5 h-5" />
-                  <p className="text-xs font-extralight">
-                    Haz clic o arrastra archivos aquí
-                  </p>
-                  <p className="text-xs font-extralight text-zinc-700">
-                    PNG, JPG, GIF, PDF, MP4 — máx {MAX_FILE_MB} MB c/u
-                  </p>
-                </div>
-              )}
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                accept={ALLOWED_TYPES.join(',')}
-                className="hidden"
-                onChange={e => { void handleFiles(e.target.files); }}
-              />
-            </div>
-
-            {/* Lista de adjuntos */}
-            {attachments.length > 0 && (
-              <div className="space-y-1.5">
-                {attachments.map(att => (
-                  <div key={att.url} className="flex items-center gap-2 px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-md group">
-                    {fileIcon(att.type)}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-zinc-300 text-xs font-extralight truncate">{att.name}</p>
-                      <p className="text-zinc-600 text-xs font-extralight">{formatBytes(att.size)}</p>
-                    </div>
-                    {att.type.startsWith('image/') && (
-                      <a href={att.url} target="_blank" rel="noreferrer"
-                        className="text-zinc-600 hover:text-zinc-400 text-xs font-extralight transition-colors">
-                        Ver
-                      </a>
-                    )}
-                    {/* Visible siempre en táctil; con mouse aparece al pasar por encima o con el foco */}
-                    <button type="button" onClick={() => handleRemoveAttachment(att)} aria-label={`Quitar ${att.name}`}
-                      className="text-zinc-700 hover:text-red-400 transition-colors [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100">
-                      <Trash2 className="w-3.5 h-3.5" />
+            {/* ── Estado ── */}
+            <div>
+              <span className="tr-form-label">¿Cómo va la tarea? <span className="tr-req">*</span></span>
+              <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Estado de la tarea">
+                {STATUS_OPTIONS.map(opt => {
+                  const sel = reportStatus === opt.value;
+                  return (
+                    <button key={opt.value} type="button" role="radio" aria-checked={sel}
+                      onClick={() => { setReportStatus(opt.value); setError(null); }}
+                      className="flex flex-col items-center gap-1.5 py-3 px-2 rounded-xl text-center transition-all"
+                      style={{
+                        border: `1px solid ${sel ? `${opt.color}66` : 'var(--campo-borde, var(--tr-linea))'}`,
+                        background: sel ? `${opt.color}14` : 'var(--campo-fondo, var(--tr-card-2))',
+                        color: sel ? opt.color : 'var(--text-muted)',
+                      }}>
+                      {opt.icon}
+                      <span className="text-[12px] leading-tight" style={{ color: sel ? opt.color : 'var(--text-primary)' }}>{opt.label}</span>
+                      <span className="text-[10px] leading-tight hidden sm:block" style={{ color: 'var(--text-muted)' }}>{opt.ayuda}</span>
                     </button>
-                  </div>
-                ))}
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* ── Motivo (solo si No completada) ── */}
+            {reportStatus === 'not-completed' && (
+              <div>
+                <label className="tr-form-label" htmlFor="rep-motivo">¿Qué lo impidió? <span className="tr-req">*</span></label>
+                <textarea id="rep-motivo" value={reason} onChange={e => setReason(e.target.value)} rows={2} maxLength={2000}
+                  placeholder="Explica qué impidió completar la tarea…" className="w-full px-3 py-2.5 text-sm resize-none" />
               </div>
             )}
+
+            {/* ── Comentario ── */}
+            <div>
+              <label className="tr-form-label" htmlFor="rep-comentario">Comentario o avance</label>
+              <textarea id="rep-comentario" value={comment} onChange={e => setComment(e.target.value)} rows={3} maxLength={4000}
+                placeholder="Qué hiciste, qué falta o cualquier nota útil…" className="w-full px-3 py-2.5 text-sm resize-none leading-relaxed" />
+            </div>
+
+            {/* ── Adjuntos ── */}
+            <div>
+              <span className="tr-form-label">Capturas o archivos <span style={{ marginLeft: 'auto', fontVariantNumeric: 'tabular-nums' }}>{attachments.length}/{MAX_FILES}</span></span>
+              <button type="button"
+                className="w-full rounded-xl p-4 text-center transition-colors"
+                style={{
+                  border: `1px dashed ${arrastrando ? 'var(--tr-a)' : 'var(--tr-linea-2)'}`,
+                  background: arrastrando ? 'color-mix(in srgb, var(--tr-a) 7%, transparent)' : 'transparent',
+                  color: 'var(--text-muted)', cursor: uploading || attachments.length >= MAX_FILES ? 'default' : 'pointer',
+                }}
+                disabled={uploading || attachments.length >= MAX_FILES}
+                onClick={() => fileInputRef.current?.click()}
+                onDragOver={e => { e.preventDefault(); setArrastrando(true); }}
+                onDragLeave={() => setArrastrando(false)}
+                onDrop={e => { e.preventDefault(); setArrastrando(false); void handleFiles(e.dataTransfer.files); }}>
+                {uploading ? (
+                  <span className="flex items-center justify-center gap-2 text-xs"><Loader2 size={15} className="animate-spin" /> Subiendo…</span>
+                ) : (
+                  <span className="flex flex-col items-center gap-1">
+                    <Upload size={18} />
+                    <span className="text-xs" style={{ color: 'var(--text-primary)' }}>
+                      {attachments.length >= MAX_FILES ? 'Llegaste al máximo de archivos' : 'Haz clic o arrastra archivos aquí'}
+                    </span>
+                    <span className="text-[11px]">PNG, JPG, GIF, WEBP, PDF o MP4 · hasta {MAX_FILE_MB} MB cada uno</span>
+                  </span>
+                )}
+              </button>
+              <input ref={fileInputRef} type="file" multiple accept={ALLOWED_TYPES.join(',')} className="hidden"
+                onChange={e => { void handleFiles(e.target.files); }} />
+
+              {attachments.length > 0 && (
+                <div className="mt-2 space-y-1.5">
+                  {attachments.map(att => (
+                    <div key={att.url} className="flex items-center gap-2.5 px-2.5 py-2 rounded-xl group"
+                      style={{ background: 'var(--tr-card-2)', border: '1px solid var(--tr-linea)' }}>
+                      <span className="tr-av" style={{ width: 34, height: 34, borderRadius: 9, color: 'var(--text-muted)', background: 'var(--tr-hover)' }}>
+                        {att.type.startsWith('image/') ? <img src={att.url} alt="" /> : fileIcon(att.type)}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs truncate" style={{ color: 'var(--text-primary)' }}>{att.name}</p>
+                        <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{formatBytes(att.size)}</p>
+                      </div>
+                      <button type="button" className="tr-icono" onClick={() => void abrirExterno(att.url)} aria-label={`Abrir ${att.name}`} title="Abrir">
+                        <ExternalLink size={14} />
+                      </button>
+                      <button type="button" className="tr-icono tr-icono-peligro" onClick={() => handleRemoveAttachment(att)} aria-label={`Quitar ${att.name}`} title="Quitar">
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {error && caja('#f87171', error)}
           </div>
 
-          {/* ── Error ── */}
-          {error && (
-            <div className="flex items-start gap-2 p-3 bg-red-950/40 border border-red-900 rounded-md">
-              <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
-              <p className="text-red-400 text-xs font-extralight">{error}</p>
-            </div>
-          )}
-
           {/* ── Acciones ── */}
-          <div className="flex gap-2 pt-2 border-t border-zinc-800">
-            <Button type="button" variant="ghost" onClick={handleClose} disabled={saving}
-              className="flex-1 text-zinc-500 hover:text-white font-extralight">
-              Cancelar
-            </Button>
-            <Button type="submit" disabled={saving || uploading}
-              className="flex-1 bg-white text-black hover:bg-zinc-200 font-extralight">
-              {saving
-                ? <><Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />Guardando...</>
-                : existingReport ? 'Actualizar reporte' : 'Enviar reporte'
-              }
-            </Button>
+          <div className="sticky bottom-0 z-10 flex justify-end gap-2 px-5 sm:px-6 py-4" style={{ borderTop: '1px solid var(--tr-linea)', background: 'var(--tr-card-2)' }}>
+            <button type="button" className="tr-btn tr-btn-fantasma" onClick={handleClose} disabled={saving}>Cancelar</button>
+            <button type="submit" className="tr-btn tr-btn-primario" disabled={saving || uploading}>
+              {saving ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+              {saving ? 'Guardando…' : existingReport ? 'Actualizar reporte' : 'Enviar reporte'}
+            </button>
           </div>
         </form>
         )}

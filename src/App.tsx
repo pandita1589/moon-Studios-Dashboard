@@ -7,6 +7,7 @@ import Login from '@/components/Login';
 import DashboardLayout from '@/components/DashboardLayout';
 import DashboardHome from '@/components/DashboardHome';
 import Calendar from '@/components/Calendar';
+import MisTareas from '@/components/MisTareas';
 import DiscordBot from '@/components/DiscordBot';
 import Announcements from '@/components/Announcements';
 import Users from '@/components/Users';
@@ -107,6 +108,7 @@ function App() {
               <Route path="/dashboard" element={<ProtectedRoute><DashboardLayout /></ProtectedRoute>}>
                 <Route index element={<DashboardHome />} />
                 <Route path="calendar"      element={<Calendar />} />
+                <Route path="tareas"        element={<MisTareas />} />
                 <Route path="discord"       element={<DiscordBot />} />
                 <Route path="announcements" element={<Announcements />} />
                 <Route path="correo"        element={<Correo />} />

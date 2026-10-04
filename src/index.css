@@ -870,3 +870,59 @@ html:not(.light) [style^="color: rgb(63, 63, 70)"],  html:not(.light) [style*=";
 html:not(.light) [style^="color: rgb(68, 68, 68)"],  html:not(.light) [style*="; color: rgb(68, 68, 68)"] { color: #74747c !important; }
 html:not(.light) [style^="color: rgb(82, 82, 91)"],  html:not(.light) [style*="; color: rgb(82, 82, 91)"],
 html:not(.light) [style^="color: rgb(85, 85, 85)"],  html:not(.light) [style*="; color: rgb(85, 85, 85)"] { color: #85858d !important; }
+
+/* ========== MODALES Y FORMULARIOS ==========
+   Muchos modales usaban como fondo var(--sidebar-card-bg), que es blanco o
+   negro al 3 %: se veía a través de ellos (el modal "Crear Nuevo Usuario"
+   mostraba las tarjetas de atrás). Ahora todo modal tiene superficie sólida
+   del tema; los visores de imágenes que quieren fondo negro llevan
+   data-fondo="oscuro". Los formularios comparten un mismo diseño: fondo,
+   borde, radio y foco con el color de acento, en oscuro y en claro. */
+:root {
+  --surface-modal:      #111114;
+  --campo-fondo:           #18181c;
+  --campo-borde:       rgba(255,255,255,0.09);
+  --campo-borde-hover: rgba(255,255,255,0.18);
+}
+html.light {
+  --surface-modal:      #ffffff;
+  --campo-fondo:           #f6f6f8;
+  --campo-borde:       rgba(0,0,0,0.12);
+  --campo-borde-hover: rgba(0,0,0,0.24);
+}
+
+.moon-dialog:not([data-fondo]) {
+  background-color: var(--surface-modal) !important;
+  border-color: var(--border-main) !important;
+  color: var(--text-primary);
+  box-shadow: 0 30px 80px rgba(0,0,0,0.55) !important;
+}
+html.light .moon-dialog:not([data-fondo]) { box-shadow: 0 30px 80px rgba(15,15,30,0.18) !important; }
+.moon-dialog-cerrar { color: var(--text-muted); }
+.moon-dialog-cerrar:hover { color: var(--text-primary); background: var(--surface-hover, rgba(255,255,255,0.05)); }
+
+/* :where() deja la especificidad en 0 para que :hover y :focus (abajo)
+   siempre ganen; antes las exclusiones le ganaban al foco. */
+:where(.main-scroll, .moon-dialog, [role="dialog"]) :where(
+  input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]):not([type=color]):not([type=hidden]),
+  textarea, select, button[role="combobox"]
+):where(:not([data-libre]):not([class~="border-0"]):not([class~="border-none"]):not([style*="background: transparent"]):not([style*="background-color: transparent"])) {
+  background-color: var(--campo-fondo) !important;
+  border: 1px solid var(--campo-borde) !important;
+  border-radius: 12px !important;
+  color: var(--text-primary) !important;
+  transition: border-color .15s ease, box-shadow .15s ease, background-color .15s ease;
+}
+:is(.main-scroll, .moon-dialog, [role="dialog"]) :is(input, textarea, select, button[role="combobox"]):not([data-libre]):hover {
+  border-color: var(--campo-borde-hover) !important;
+}
+:is(.main-scroll, .moon-dialog, [role="dialog"]) :is(input, textarea, select, button[role="combobox"]):not([type=checkbox]):not([type=radio]):not([type=range]):not([data-libre]):is(:focus, :focus-visible) {
+  outline: none !important;
+  border-color: var(--accent-user, #6366f1) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-user, #6366f1) 22%, transparent) !important;
+}
+:is(.main-scroll, .moon-dialog, [role="dialog"]) :is(input, textarea)::placeholder { color: var(--text-muted) !important; opacity: .75; }
+:is(.main-scroll, .moon-dialog, [role="dialog"]) :is(input, textarea, select):disabled { opacity: .55; cursor: not-allowed; }
+:is(.main-scroll, .moon-dialog, [role="dialog"]) input[type=checkbox],
+:is(.main-scroll, .moon-dialog, [role="dialog"]) input[type=radio] { accent-color: var(--accent-user, #6366f1); }
+html:not(.light) :is(input[type=date], input[type=time], input[type=datetime-local], input[type=month]) { color-scheme: dark; }

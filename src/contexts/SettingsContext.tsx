@@ -18,6 +18,7 @@ export interface Settings {
   notifyEmails?:        boolean;
   notifyThreads?:       boolean;
   notifyMessages?:      boolean;
+  notifyTasks?:         boolean;
   quietHoursEnabled?:   boolean;
   quietFrom?:           string;
   quietTo?:             string;
@@ -78,6 +79,7 @@ const defaultSettings: Settings = {
   notifyEmails:        true,
   notifyThreads:       true,
   notifyMessages:      true,
+  notifyTasks:         true,
   quietHoursEnabled:   false,
   quietFrom:           '22:00',
   quietTo:             '08:00',

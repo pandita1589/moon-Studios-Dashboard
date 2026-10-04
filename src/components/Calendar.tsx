@@ -305,7 +305,7 @@ interface ExtTask extends Task {
 // ── Visibility helpers ────────────────────────────────────────────────────────
 const canUserSeeTask = (task: ExtTask, userProfile: UserProfile | null): boolean => {
   if (!userProfile) return false;
-  if (userProfile.role === 'CEO') return true;
+  if (userProfile.role === 'CEO' || userProfile.role === 'Administración') return true;
   if (!task.assignedTo && !task.assignedToRole) return true;
   if (task.assignedTo) return task.assignedTo === userProfile.uid;
   if (task.assignedToRole) return task.assignedToRole === userProfile.role;

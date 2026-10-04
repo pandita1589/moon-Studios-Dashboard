@@ -9,7 +9,7 @@ import type { SoundType } from '@/lib/notificationSound';
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
-export type NotifCategory = 'announcement' | 'email' | 'thread' | 'message';
+export type NotifCategory = 'announcement' | 'email' | 'thread' | 'message' | 'task';
 
 export interface UnifiedNotification {
   id:        string;
@@ -132,7 +132,7 @@ export function useNotifications({
   }, [uid]);
 
   // ── Merge helper ──────────────────────────────────────────────────────────
-  const merge = useCallback((incoming: UnifiedNotification[], category: NotifCategory | 'mention') => {
+  const merge = useCallback((incoming: UnifiedNotification[], category: NotifCategory | 'mention' | 'aviso-tarea') => {
     setNotifications(prev => {
       const rest     = prev.filter(n => (n.fuente ?? n.category) !== category);
       const combined = [...rest, ...incoming];
@@ -285,35 +285,56 @@ export function useNotifications({
     return unsub;
   }, [uid, enabledCategories.thread, merge]);
 
-  // ── Listener: Menciones en Hilos ──────────────────────────────────────────
-  // Hilos.tsx escribe una notificación por respuesta con los mencionados en
-  // `toUids`. Nadie leía la colección `notifications`: las menciones nunca
-  // llegaban. Solo array-contains (sin orderBy) para no necesitar índice.
+  // ── Listener: colección `notifications` (menciones y tareas) ─────────────
+  // Hilos.tsx escribe una por respuesta con los mencionados en `toUids`; el
+  // sistema de tareas (lib/tareas.ts) escribe 'task-assigned', 'task-status' y
+  // 'task-report'. Solo array-contains (sin orderBy) para no necesitar índice.
+  const conMenciones = !!enabledCategories.thread;
+  const conTareas    = !!enabledCategories.task;
   useEffect(() => {
-    if (!uid || !enabledCategories.thread) return;
+    if (!uid || (!conMenciones && !conTareas)) return;
     const q = query(collection(db, 'notifications'), where('toUids', 'array-contains', uid));
+    const ESTADO: Record<string, string> = {
+      pending: 'pendiente', 'in-progress': 'en progreso', completed: 'completada', 'not-completed': 'no completada',
+    };
     const unsub = onSnapshot(q, snap => {
-      const items: UnifiedNotification[] = snap.docs
-        .map(doc => {
-          const d = doc.data();
-          return {
-            id:        `mencion_${doc.id}`,
-            rawId:     doc.id,
-            category:  'thread' as NotifCategory,
-            fuente:    'mention',
-            title:     `${d.authorName || 'Alguien'} te mencionó`,
-            preview:   d.hiloTitle ? `En "${d.hiloTitle}"` : 'En un hilo',
-            createdAt: d.createdAt?.toDate ? d.createdAt.toDate() : new Date(0),
-            linkTo:    '/dashboard/hilos',
-          };
-        })
-        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-        .slice(0, 20);
-      merge(items, 'mention');
-    }, err => console.error('[notif] menciones:', err));
+      const menciones: UnifiedNotification[] = [];
+      const tareas: UnifiedNotification[] = [];
+      for (const doc of snap.docs) {
+        const d = doc.data();
+        const createdAt = d.createdAt?.toDate ? d.createdAt.toDate() : new Date(0);
+        const tipo = String(d.type ?? 'mention');
+        if (tipo.startsWith('task')) {
+          if (!conTareas || d.authorUid === uid) continue;
+          const titulo = d.taskTitle ? `"${d.taskTitle}"` : 'una tarea';
+          const estado = ESTADO[String(d.estado ?? '')] ?? '';
+          tareas.push({
+            id: `tarea_${doc.id}`, rawId: doc.id, category: 'task', fuente: 'aviso-tarea', createdAt,
+            title: tipo === 'task-assigned' ? 'Nueva tarea para ti'
+              : tipo === 'task-report' ? `${d.authorName || 'Alguien'} reportó una tarea`
+              : 'Una tarea cambió de estado',
+            preview: tipo === 'task-assigned' ? `${titulo}${d.authorName ? ` · de ${d.authorName}` : ''}`
+              : tipo === 'task-report' ? `${titulo}${estado ? ` · ${estado}` : ''}`
+              : `${titulo}${estado ? ` ahora está ${estado}` : ''}`,
+            linkTo: tipo === 'task-report' ? '/dashboard/tareas?vista=equipo' : '/dashboard/tareas',
+            important: tipo === 'task-assigned',
+          });
+        } else if (conMenciones) {
+          menciones.push({
+            id: `mencion_${doc.id}`, rawId: doc.id, category: 'thread', fuente: 'mention', createdAt,
+            title: `${d.authorName || 'Alguien'} te mencionó`,
+            preview: d.hiloTitle ? `En "${d.hiloTitle}"` : 'En un hilo',
+            linkTo: '/dashboard/hilos',
+          });
+        }
+      }
+      const recientes = (l: UnifiedNotification[]) => l.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, 20);
+      merge(recientes(menciones), 'mention');
+      merge(recientes(tareas), 'aviso-tarea');
+    }, err => console.error('[notif] notifications:', err));
     // Al desactivar la categoría o cerrar sesión se quitan de la campana.
-    return () => { unsub(); merge([], 'mention'); };
-  }, [uid, enabledCategories.thread, merge]);
+    return () => { unsub(); merge([], 'mention'); merge([], 'aviso-tarea'); };
+  }, [uid, conMenciones, conTareas, merge]);
 
   // ── Listener: Mensajería ──────────────────────────────────────────────────
   useEffect(() => {

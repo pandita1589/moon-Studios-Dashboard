@@ -134,7 +134,7 @@ const filename = `${Date.now()}.${ext}`;
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent
+      <DialogContent showCloseButton={false}
         className="bg-zinc-950 border-zinc-800 text-white max-w-6xl w-full overflow-hidden flex flex-col p-0 gap-0 [&>button]:hidden"
         style={{ height: viewerFile ? '90vh' : 'auto', maxHeight: '90vh', maxWidth: viewerFile ? '85vw' : '42rem', width: '100%' }}>
 

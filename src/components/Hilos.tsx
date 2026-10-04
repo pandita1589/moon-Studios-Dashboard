@@ -1789,7 +1789,7 @@ const HilosComponent: React.FC = () => {
           VISOR DE ARCHIVOS
       ══════════════════════ */}
       <Dialog open={!!viewerFile} onOpenChange={open => !open && setViewerFile(null)}>
-        <DialogContent className="bg-zinc-950 border-zinc-800 w-[95vw] !max-w-5xl p-0 overflow-hidden">
+        <DialogContent showCloseButton={false} className="bg-zinc-950 border-zinc-800 w-[95vw] !max-w-5xl p-0 overflow-hidden">
           <DialogDescription className="sr-only">Vista previa del archivo</DialogDescription>
           {viewerFile && (
             <div className="flex flex-col max-h-[90vh]">
@@ -2049,7 +2049,7 @@ export const HilosObserverView: React.FC<{ hiloId: string }> = ({ hiloId }) => {
       </div>
       {/* Visor observer */}
       <Dialog open={!!viewerFile} onOpenChange={open => !open && setViewerFile(null)}>
-        <DialogContent className="bg-zinc-950 border-zinc-800 w-[95vw] !max-w-5xl p-0 overflow-hidden">
+        <DialogContent showCloseButton={false} className="bg-zinc-950 border-zinc-800 w-[95vw] !max-w-5xl p-0 overflow-hidden">
           <DialogDescription className="sr-only">Vista previa del archivo</DialogDescription>
           {viewerFile && (
             <div className="flex flex-col max-h-[90vh]">

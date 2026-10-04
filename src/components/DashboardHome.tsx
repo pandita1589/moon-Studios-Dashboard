@@ -8,6 +8,9 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useSettings } from '@/contexts/SettingsContext';
+import { useAuth } from '@/contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
+import { aTarea, esParaMi, esGestorTareas, plazo } from '@/lib/tareas';
 import {
   CheckCircle2, Clock, Bot, Maximize2, X, Megaphone, Play, Pause,
   Activity, Sparkles, CheckCheck, Zap, TrendingUp,
@@ -763,7 +766,7 @@ const FILTERS: { key: FilterType; label: string }[] = [
   { key: 'completed',   label: 'Completadas' },
 ];
 
-const TaskList: React.FC<{ tasks: Task[] }> = ({ tasks }) => {
+const TaskList: React.FC<{ tasks: Task[]; titulo: string; onAbrir: () => void }> = ({ tasks, titulo, onAbrir }) => {
   const [filter, setFilter] = useState<FilterType>('all');
   const filtered = tasks.filter(t => filter === 'all' || t.status === filter);
 
@@ -775,7 +778,7 @@ const TaskList: React.FC<{ tasks: Task[] }> = ({ tasks }) => {
       <div className="dh-section-hd">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <h3 style={{ fontSize: 13, fontWeight: 700, color: 'var(--dh-text)', letterSpacing: '-0.01em' }}>
-            Tareas Activas
+            {titulo}
           </h3>
           <span style={{
             fontSize: 10, padding: '2px 7px', borderRadius: 4,
@@ -783,6 +786,7 @@ const TaskList: React.FC<{ tasks: Task[] }> = ({ tasks }) => {
           }}>
             {tasks.length}
           </span>
+          <button type="button" onClick={onAbrir} className="dh-filter-btn" style={{ marginLeft: 2 }}>Ver todas →</button>
         </div>
         <div className="dh-filters" style={{ display: 'flex', gap: 3 }}>
           {FILTERS.map(f => (
@@ -809,7 +813,9 @@ const TaskList: React.FC<{ tasks: Task[] }> = ({ tasks }) => {
             <div
               key={task.id}
               className="dh-task-row animate-fade-up"
-              style={{ animationDelay: `${0.46 + i * 0.03}s` }}
+              style={{ animationDelay: `${0.46 + i * 0.03}s`, cursor: 'pointer' }}
+              role="button" tabIndex={0} onClick={onAbrir}
+              onKeyDown={e => { if (e.key === 'Enter') onAbrir(); }}
             >
               <div style={{
                 width: 28, height: 28, borderRadius: 'var(--dh-radius-sm)', flexShrink: 0,
@@ -836,6 +842,11 @@ const TaskList: React.FC<{ tasks: Task[] }> = ({ tasks }) => {
                 </p>
                 <p style={{ fontSize: 11, color: 'var(--dh-text-3)', marginTop: 2, fontWeight: 500 }}>
                   {formatDateShort(task.date)}
+                  {(() => {
+                    const p = plazo(aTarea(task as unknown as Record<string, unknown>));
+                    return p.tipo === 'vencida' || p.tipo === 'hoy'
+                      ? <span style={{ color: p.color, marginLeft: 6 }}>· {p.texto}</span> : null;
+                  })()}
                 </p>
               </div>
               {task.priority === 'high' && (
@@ -1539,8 +1550,13 @@ const ordenarBanners = <T extends { orden?: number; creadoEn?: { toMillis?: () =
 // ─── Main Component ───────────────────────────────────────────────────────────
 const DashboardHome: React.FC = () => {
   useSettings();
+  const { userProfile } = useAuth();
+  const navigate = useNavigate();
+  const verEquipo = esGestorTareas(userProfile?.role);
 
-  const [tasks,         setTasks]         = useState<Task[]>([]);
+  const [todasTareas,   setTasks]         = useState<Task[]>([]);
+  const tasks = verEquipo ? todasTareas
+    : todasTareas.filter(t => esParaMi(aTarea(t as unknown as Record<string, unknown>), userProfile));
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [anunciosSemana, setAnunciosSemana] = useState(0);
   const [botStatus,     setBotStatus]     = useState<any>(null);
@@ -1699,7 +1715,8 @@ const DashboardHome: React.FC = () => {
         )}
 
         {/* ── Main content ── */}
-        <TaskList          tasks={tasks} />
+        <TaskList          tasks={tasks} titulo={verEquipo ? 'Tareas del equipo' : 'Mis tareas'}
+                           onAbrir={() => navigate(verEquipo ? '/dashboard/tareas?vista=equipo' : '/dashboard/tareas')} />
         <AnnouncementsFeed announcements={announcements} />
 
         {/* ── Bottom row ── */}

@@ -6,8 +6,9 @@ import EmployeeProfileModal   from '@/components/EmployeeProfileModal';
 import EmployeeCredentialModal from '@/components/EmployeeCredentialModal';
 import BarcodeScannerModal    from '@/components/BarcodeScannerModal';
 import EmployeeContractModal  from '@/components/EmployeeContractModal';
+import GestorTareas            from '@/components/tareas/GestorTareas';
 import { 
-  subscribeToUsers, subscribeToTasks, createTask, deleteTask, updateTask,
+  subscribeToUsers, subscribeToTasks,
   logActivity, updateUserProfile,
   deleteUserData, createUserWithRole
 } from '@/lib/firebase';
@@ -29,8 +30,8 @@ import {
 import { 
   Crown, Users, CheckSquare, Trash2, Plus, UserPlus,
   RefreshCw, Search, Mail, User, Shield, Eye, EyeOff,
-  CheckCircle, AlertCircle, Lock, Calendar, Flag,
-  UserCheck, UsersRound, ChevronRight, ClipboardList,
+  CheckCircle, AlertCircle, Lock, Calendar,
+  ChevronRight,
   FileText, Download, File, XCircle, Filter, Clock, 
   CheckCheck, QrCode, ScanLine, Image as ImageIcon, 
   ChevronLeft, MonitorPlay,
@@ -64,7 +65,6 @@ interface FormError {
   message: string;
 }
 
-type AssignMode = 'user' | 'role';
 
 interface TaskReport {
   id: string;
@@ -133,12 +133,6 @@ const ROLE_PALETTE = [
 
 const FIXED_ROLES: UserRole[] = ['CEO', 'Administración', 'Empleado', 'Contador', 'Diseño', 'Secretaría', 'Programación'];
 
-const PRIORITY_CONFIG = {
-  high:   { label: 'Alta',  color: 'text-red-400',    bg: 'bg-red-950/60',    border: 'border-red-800/60',    dot: 'bg-red-400',    glow: 'shadow-red-500/20'    },
-  medium: { label: 'Media', color: 'text-amber-400',  bg: 'bg-amber-950/60',  border: 'border-amber-800/60',  dot: 'bg-amber-400',  glow: 'shadow-amber-500/20'  },
-  low:    { label: 'Baja',  color: 'text-emerald-400',bg: 'bg-emerald-950/60',border: 'border-emerald-800/60',dot: 'bg-emerald-400',glow: 'shadow-emerald-500/20'},
-};
-
 const REPORT_STATUS_CONFIG = {
   completed:       { label: 'Completada',    color: 'text-emerald-400', bg: 'bg-emerald-950/60', border: 'border-emerald-800/60', icon: CheckCheck,  accent: '#34d399' },
   'in-progress':   { label: 'En Desarrollo', color: 'text-blue-400',    bg: 'bg-blue-950/60',    border: 'border-blue-800/60',    icon: Clock,       accent: '#60a5fa' },
@@ -149,15 +143,6 @@ const ALL_ROLES_LIST: UserRole[] = ['CEO','Administración','Diseño','Secretar�
 // Roles que el CEO puede asignar: el de CEO no se reparte desde el panel
 // (igual que en Gestión de Roles).
 const ASSIGNABLE_ROLES: UserRole[] = ALL_ROLES_LIST.filter(r => r !== 'CEO');
-
-type TaskStatus = 'pending' | 'in-progress' | 'completed';
-const TASK_STATUS_CONFIG: Record<TaskStatus, { label: string; color: string }> = {
-  pending:       { label: '• Pendiente',   color: '#fb923c' },
-  'in-progress': { label: '⏳ En progreso', color: '#60a5fa' },
-  completed:     { label: '✓ Completada',  color: '#34d399' },
-};
-const taskStatusCfg = (status: unknown) =>
-  TASK_STATUS_CONFIG[status as TaskStatus] ?? TASK_STATUS_CONFIG.pending;
 
 // Firebase y la API del bot lanzan objetos con code/message; se leen sin `any`.
 const infoError = (e: unknown) => (e ?? {}) as { code?: string; message?: string };
@@ -170,15 +155,6 @@ const esUsuarioInexistente = (msg: string) => /user-not-found|usuario no existe|
 const getRoleConfig = (role: string, allRoles: string[]) => {
   const idx = allRoles.indexOf(role);
   return { label: role, ...ROLE_PALETTE[idx % ROLE_PALETTE.length] };
-};
-
-const toDateInputValue = (dateField: any): string => {
-  if (!dateField) return '';
-  try {
-    const d: Date = dateField?.toDate ? dateField.toDate() : new Date(dateField);
-    if (isNaN(d.getTime())) return '';
-    return d.toISOString().split('T')[0];
-  } catch { return ''; }
 };
 
 /* ─── PASSWORD STRENGTH ─── */
@@ -263,7 +239,6 @@ const CEOPanel: React.FC = () => {
   const [tasks,           setTasks]           = useState<any[]>([]);
   const [loading,         setLoading]         = useState(true);
   const [searchUser,      setSearchUser]      = useState('');
-  const [showAddTask,     setShowAddTask]      = useState(!!fechaNuevaTarea);
   const [showAddUser,     setShowAddUser]      = useState(false);
   const [isCreatingUser,  setIsCreatingUser]   = useState(false);
   const [isDeletingUser,  setIsDeletingUser]   = useState<string | null>(null);
@@ -288,13 +263,6 @@ const CEOPanel: React.FC = () => {
   const [showReportDetail,setShowReportDetail] = useState(false);
   const [viewerFile,      setViewerFile]       = useState<{ url: string; name: string; type: string } | null>(null);
   const [showViewer,      setShowViewer]       = useState(false);
-  const [assignMode,      setAssignMode]       = useState<AssignMode>('user');
-  const [newTask, setNewTask] = useState({
-    title: '', description: '', assignedTo: '',
-    assignedToRole: '' as UserRole | '',
-    priority: 'medium' as 'low' | 'medium' | 'high',
-    dueDate: fechaNuevaTarea ?? ''
-  });
   const [newUser, setNewUser] = useState<NewUserForm>({
     email: '', password: '', confirmPassword: '', displayName: '', role: 'Empleado'
   });
@@ -319,11 +287,6 @@ const CEOPanel: React.FC = () => {
   const [hoveringBanner,     setHoveringBanner]     = useState(false);
   const [saveSuccessModal,   setSaveSuccessModal]   = useState(false);
   const [activeEmployeeTab,  setActiveEmployeeTab]  = useState<'list' | 'grid'>('list');
-  const [selectedTask,       setSelectedTask]       = useState<any | null>(null);
-  const [showTaskDetail,     setShowTaskDetail]     = useState(false);
-  const [editingTask,        setEditingTask]        = useState(false);
-  const [editTask,           setEditTask]           = useState<any>({});
-  const [editAssignMode,     setEditAssignMode]     = useState<AssignMode>('user');
   /* ── NUEVO: modal de cambio de rol en mobile ── */
   const [roleChangeUser,     setRoleChangeUser]     = useState<UserProfile | null>(null);
   const [showRoleModal,      setShowRoleModal]      = useState(false);
@@ -461,64 +424,6 @@ const CEOPanel: React.FC = () => {
     }
   };
 
-  const handleCreateTask = async () => {
-    if (!newTask.title.trim()) { toast.error('El título es obligatorio'); return; }
-    if (assignMode === 'user' && !newTask.assignedTo) { toast.error('Selecciona un usuario'); return; }
-    if (assignMode === 'role' && !newTask.assignedToRole) { toast.error('Selecciona un rol'); return; }
-    if (!newTask.dueDate) { toast.error('La fecha límite es obligatoria'); return; }
-    try {
-      await createTask({
-        title: newTask.title, description: newTask.description, priority: newTask.priority,
-        status: 'pending', createdBy: userProfile?.uid, createdByName: userProfile?.displayName,
-        date: Timestamp.fromDate(new Date(newTask.dueDate + 'T12:00:00')),
-        ...(assignMode === 'user'
-          ? { assignedTo: newTask.assignedTo, assignedToRole: null }
-          : { assignedTo: null, assignedToRole: newTask.assignedToRole }),
-      });
-      await registrar('TASK_CREATED', { title: newTask.title });
-      setNewTask({ title: '', description: '', assignedTo: '', assignedToRole: '', priority: 'medium', dueDate: '' });
-      setShowAddTask(false);
-      toast.success('Tarea creada');
-    } catch { toast.error('Error al crear la tarea'); }
-  };
-
-  const handleDeleteTask = async (taskId: string, title: string) => {
-    if (!confirm(`¿Eliminar tarea "${title}"?`)) return;
-    try {
-      await deleteTask(taskId);
-      await registrar('TASK_DELETED', { taskId, title });
-      toast.success('Tarea eliminada');
-    } catch { toast.error('Error al eliminar la tarea'); }
-  };
-
-  const handleUpdateTask = async () => {
-    if (!selectedTask) return;
-    if (!editTask.title?.trim()) { toast.error('El título es obligatorio'); return; }
-    try {
-      const updatePayload: any = {
-        title:       editTask.title.trim(),
-        description: editTask.description,
-        priority:    editTask.priority,
-        status:      editTask.status ?? selectedTask.status ?? 'pending',
-      };
-      if (editTask.dueDate) {
-        updatePayload.date = Timestamp.fromDate(new Date(editTask.dueDate + 'T12:00:00'));
-      }
-      if (editAssignMode === 'user') {
-        updatePayload.assignedTo     = editTask.assignedTo || null;
-        updatePayload.assignedToRole = null;
-      } else {
-        updatePayload.assignedTo     = null;
-        updatePayload.assignedToRole = editTask.assignedToRole || null;
-      }
-      await updateTask(selectedTask.id, updatePayload);
-      await registrar('TASK_UPDATED', { taskId: selectedTask.id, title: updatePayload.title });
-      setSelectedTask((prev: any) => ({ ...prev, ...updatePayload }));
-      setEditingTask(false);
-      toast.success('Tarea actualizada');
-    } catch { toast.error('Error al actualizar la tarea'); }
-  };
-
   const handleDeleteReport = async (reportId: string, reportPath: string) => {
     if (!confirm('¿Eliminar este reporte permanentemente?\n\nSe borrarán también los archivos adjuntos.')) return;
     try {
@@ -587,15 +492,6 @@ const CEOPanel: React.FC = () => {
     u.displayName?.toLowerCase().includes(searchUser.toLowerCase()) ||
     u.email?.toLowerCase().includes(searchUser.toLowerCase())
   );
-
-  const getAssignedLabel = (task: any) => {
-    if (task.assignedToRole) {
-      const cfg = getRoleConfig(task.assignedToRole, allRoles);
-      return <span className={`inline-flex items-center gap-1 text-xs ${cfg.color}`}><UsersRound className="w-3 h-3" />{cfg.label}</span>;
-    }
-    const user = users.find(u => u.uid === task.assignedTo);
-    return <span className="inline-flex items-center gap-1 text-xs text-[color:var(--text-muted)]"><UserCheck className="w-3 h-3" />{user?.displayName ?? 'Sin asignar'}</span>;
-  };
 
   if (loading || !mounted) return (
     <div className="flex items-center justify-center h-64 ceo-fade-scale">
@@ -1344,517 +1240,9 @@ const CEOPanel: React.FC = () => {
           {/* ══════════════════════════════════════════
               PESTAÑA: TAREAS
           ══════════════════════════════════════════ */}
-          <TabsContent value="tasks" className="mt-4 sm:mt-6 space-y-4 sm:space-y-5 ceo-slide-up">
-
-            {/* Stats tareas */}
-            <div className="grid grid-cols-3 gap-2 sm:gap-3">
-              {[
-                { label: 'Total', value: tasks.length, color: accent },
-                { label: 'Pendientes', value: tasks.filter(t => t.status === 'pending').length, color: '#fb923c' },
-                { label: 'Prioridad Alta', value: tasks.filter(t => t.priority === 'high').length, color: '#f87171' },
-              ].map(s => (
-                <div key={s.label} className="rounded-xl p-3 sm:p-4 border text-center"
-                  style={{ background: cardBg, borderColor: `${s.color}25` }}>
-                  <div className="text-xl sm:text-2xl font-extralight mb-0.5 sm:mb-1" style={{ color: s.color }}>{s.value}</div>
-                  <div className="text-[10px] sm:text-xs font-extralight uppercase tracking-wider" style={{ color: textMuted }}>{s.label}</div>
-                </div>
-              ))}
-            </div>
-
-            {/* Header */}
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-xs sm:text-sm font-extralight" style={{ color: textMuted }}>
-                {tasks.length} tarea{tasks.length !== 1 ? 's' : ''} en total
-              </p>
-              <button onClick={() => setShowAddTask(!showAddTask)}
-                className="ceo-btn-accent ceo-btn-press flex items-center gap-2 px-3 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-extralight">
-                {showAddTask ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-                {showAddTask ? 'Cancelar' : 'Nueva Tarea'}
-              </button>
-            </div>
-
-            {/* Formulario nueva tarea */}
-            {showAddTask && (
-              <div className="rounded-2xl overflow-hidden border ceo-fade-scale"
-                style={{ background: cardBg, borderColor: `${accent}33` }}>
-                <div className="flex items-center gap-3 px-4 sm:px-5 py-3 sm:py-4 border-b" style={{ borderColor, background: `${accent}08` }}>
-                  <ClipboardList className="w-4 h-4 flex-shrink-0" style={{ color: accent }} strokeWidth={1.5} />
-                  <span className="font-extralight text-sm tracking-wide" style={{ color: textPrimary }}>Crear nueva tarea</span>
-                </div>
-                <div className="p-4 sm:p-5 space-y-4 sm:space-y-5">
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-                    <div className="sm:col-span-2 space-y-1.5">
-                      <Label className="font-extralight text-xs uppercase tracking-wider" style={{ color: textMuted }}>Título *</Label>
-                      <Input value={newTask.title} onChange={(e) => setNewTask({...newTask, title: e.target.value})}
-                        placeholder="Ej: Revisar contratos Q3"
-                        style={{ background: surfaceSubtle, border: `1px solid ${borderColor}`, color: textPrimary }} />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="font-extralight text-xs uppercase tracking-wider flex items-center gap-1.5" style={{ color: textMuted }}>
-                        <Flag className="w-3 h-3" /> Prioridad
-                      </Label>
-                      <Select value={newTask.priority} onValueChange={(v: 'low'|'medium'|'high') => setNewTask({...newTask, priority: v})}>
-                        <SelectTrigger style={{ background: surfaceSubtle, border: `1px solid ${borderColor}`, color: textPrimary }} className="font-extralight">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className="ceo-listbox" style={{ background: 'var(--dropdown-bg, #18181b)', border: `1px solid ${borderColor}`, zIndex: 9999 }}>
-                          {Object.entries(PRIORITY_CONFIG).map(([k, cfg]) => (
-                            <SelectItem key={k} value={k} className="font-extralight" style={{ color: textPrimary }}>
-                              <span className="flex items-center gap-2">
-                                <span className={`w-2 h-2 rounded-full ${cfg.dot}`} /> {cfg.label}
-                              </span>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <Label className="font-extralight text-xs uppercase tracking-wider" style={{ color: textMuted }}>Descripción</Label>
-                    <Textarea value={newTask.description} onChange={(e) => setNewTask({...newTask, description: e.target.value})}
-                      placeholder="Detalla el objetivo o los pasos de esta tarea…"
-                      rows={3}
-                      style={{ background: surfaceSubtle, border: `1px solid ${borderColor}`, color: textPrimary }}
-                      className="font-extralight resize-none" />
-                  </div>
-
-                  {/* Asignar */}
-                  <div className="space-y-3">
-                    <Label className="font-extralight text-xs uppercase tracking-wider" style={{ color: textMuted }}>Asignar a *</Label>
-                    <div className="inline-flex rounded-xl overflow-hidden border p-0.5 gap-0.5" style={{ background: surfaceSubtle, borderColor }}>
-                      {[
-                        { mode: 'user' as AssignMode, label: 'Usuario', icon: UserCheck },
-                        { mode: 'role' as AssignMode, label: 'Rol',     icon: UsersRound },
-                      ].map(({ mode, label, icon: Icon }) => (
-                        <button key={mode} type="button"
-                          onClick={() => { setAssignMode(mode); setNewTask({...newTask, assignedTo: '', assignedToRole: ''}); }}
-                          className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-extralight transition-all"
-                          style={{
-                            background: assignMode === mode ? `${accent}20` : 'transparent',
-                            color: assignMode === mode ? textPrimary : textMuted,
-                          }}>
-                          <Icon className="w-3.5 h-3.5" /> {label}
-                        </button>
-                      ))}
-                    </div>
-
-                    {assignMode === 'user' && (
-                      <div className="rounded-xl overflow-hidden border" style={{ borderColor, background: `${surfaceSubtle}` }}>
-                        {users.length === 0 ? (
-                          <p className="p-4 text-sm font-extralight text-center" style={{ color: textMuted }}>No hay usuarios disponibles</p>
-                        ) : (
-                          <div className="divide-y max-h-52 overflow-y-auto ceo-scroll" style={{ borderColor }}>
-                            {users.map(u => {
-                              const isSelected = newTask.assignedTo === u.uid;
-                              const roleCfg = getRoleConfig(u.role, allRoles);
-                              return (
-                                <button key={u.uid} type="button" onClick={() => setNewTask({...newTask, assignedTo: u.uid})}
-                                  className="w-full flex items-center justify-between px-3 sm:px-4 py-2.5 sm:py-3 transition-all text-left border-l-2"
-                                  style={{
-                                    background: isSelected ? `${accent}10` : 'transparent',
-                                    borderLeftColor: isSelected ? accent : 'transparent',
-                                  }}>
-                                  <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-                                    <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center ceo-user-avatar flex-shrink-0">
-                                      <span className="text-sm font-extralight" style={{ color: accent }}>
-                                        {u.displayName?.[0]?.toUpperCase() ?? '?'}
-                                      </span>
-                                    </div>
-                                    <div className="min-w-0">
-                                      <p className="text-xs sm:text-sm font-extralight truncate" style={{ color: isSelected ? textPrimary : textMuted }}>{u.displayName}</p>
-                                      <p className="text-[10px] sm:text-xs font-extralight truncate" style={{ color: textMuted }}>{u.email}</p>
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0 ml-2">
-                                    <span className={`text-xs font-extralight px-2 py-0.5 rounded-full border ${roleCfg.bg} ${roleCfg.color} ${roleCfg.border}`}>{roleCfg.label}</span>
-                                    {isSelected && <CheckCircle className="w-4 h-4" style={{ color: accent }} />}
-                                  </div>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {assignMode === 'role' && (
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3">
-                        {allRoles.map(role => {
-                          const cfg = getRoleConfig(role, allRoles);
-                          const isSelected = newTask.assignedToRole === role;
-                          const count = users.filter(u => u.role === role).length;
-                          return (
-                            <button key={role} type="button" onClick={() => setNewTask({...newTask, assignedToRole: role as UserRole})}
-                              className="flex flex-col gap-1.5 sm:gap-2 p-3 sm:p-4 rounded-xl border transition-all text-left"
-                              style={{
-                                background: isSelected ? `${accent}12` : surfaceSubtle,
-                                borderColor: isSelected ? `${accent}55` : borderColor,
-                                borderWidth: isSelected ? 2 : 1,
-                              }}>
-                              <div className="flex items-center justify-between">
-                                <UsersRound className="w-4 h-4" style={{ color: isSelected ? undefined : textMuted }} />
-                                {isSelected && <CheckCircle className="w-3.5 h-3.5" style={{ color: accent }} />}
-                              </div>
-                              <div>
-                                <p className={`text-xs sm:text-sm font-extralight ${isSelected ? cfg.color : ''}`} style={{ color: isSelected ? undefined : textMuted }}>{cfg.label}</p>
-                                <p className="text-[10px] font-extralight mt-0.5" style={{ color: textMuted }}>{count} miembro{count !== 1 ? 's' : ''}</p>
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    {(newTask.assignedTo || newTask.assignedToRole) && (
-                      <div className="flex items-center gap-2 text-xs font-extralight" style={{ color: accent }}>
-                        <ChevronRight className="w-3 h-3 flex-shrink-0" />
-                        <span className="truncate">
-                          {assignMode === 'user'
-                            ? `Asignado a: ${users.find(u => u.uid === newTask.assignedTo)?.displayName}`
-                            : `Asignado al rol: ${getRoleConfig(newTask.assignedToRole, allRoles)?.label}`}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <Label className="font-extralight text-xs uppercase tracking-wider flex items-center gap-1.5" style={{ color: textMuted }}>
-                      <Calendar className="w-3 h-3" /> Fecha límite *
-                    </Label>
-                    <Input type="date" value={newTask.dueDate} onChange={(e) => setNewTask({...newTask, dueDate: e.target.value})}
-                      style={{ background: surfaceSubtle, border: `1px solid ${borderColor}`, color: textPrimary }}
-                      className="font-extralight w-full sm:max-w-xs [color-scheme:dark]" />
-                  </div>
-
-                  <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2 pt-2 border-t" style={{ borderColor }}>
-                    <button onClick={() => { setShowAddTask(false); setNewTask({ title:'', description:'', assignedTo:'', assignedToRole:'', priority:'medium', dueDate:'' }); }}
-                      className="px-4 py-2.5 rounded-xl text-sm font-extralight transition-all hover:bg-[var(--surface-hover)] text-center" style={{ color: textMuted }}>
-                      Cancelar
-                    </button>
-                    <button onClick={handleCreateTask}
-                      className="ceo-btn-accent ceo-btn-press flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-extralight">
-                      <CheckSquare className="w-4 h-4" /> Crear Tarea
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Lista de tareas */}
-            {tasks.length === 0 && !showAddTask ? (
-              <div className="flex flex-col items-center justify-center py-16 sm:py-20 text-center rounded-2xl border-2 border-dashed" style={{ borderColor }}>
-                <CheckSquare className="w-12 h-12 mb-3 opacity-15" style={{ color: accent }} strokeWidth={1} />
-                <p className="font-extralight" style={{ color: textMuted }}>No hay tareas creadas</p>
-                <p className="text-sm font-extralight mt-1" style={{ color: textMuted }}>Pulsa "Nueva Tarea" para empezar</p>
-              </div>
-            ) : (
-              <div className="ceo-stagger space-y-2">
-                {tasks.map((task, i) => {
-                  const priCfg = PRIORITY_CONFIG[task.priority as keyof typeof PRIORITY_CONFIG] ?? PRIORITY_CONFIG.medium;
-                  return (
-                    <div key={task.id}
-                      className="ceo-task-card rounded-2xl border p-3 sm:p-4 transition-all duration-200"
-                      style={{ background: cardBg, borderColor, animationDelay: `${i * 40}ms` }}>
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-start gap-2 sm:gap-3 min-w-0 flex-1">
-                          <div className="mt-2 flex-shrink-0">
-                            <div className={`w-2 h-2 rounded-full ${priCfg.dot}`} />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <p className="font-extralight truncate text-sm sm:text-base mb-0.5" style={{ color: textPrimary }}>{task.title}</p>
-                            {task.description && (
-                              <p className="text-xs sm:text-sm font-extralight line-clamp-1 mb-2" style={{ color: textMuted }}>{task.description}</p>
-                            )}
-                            <div className="flex items-center flex-wrap gap-1.5 sm:gap-2">
-                              <span className={`inline-flex items-center gap-1 text-[10px] sm:text-xs font-extralight px-2 py-0.5 rounded-full border ${priCfg.bg} ${priCfg.color} ${priCfg.border}`}>
-                                <Flag className="w-2.5 h-2.5" /> {priCfg.label}
-                              </span>
-                              <span className="text-[10px] sm:text-xs font-extralight" style={{ color: taskStatusCfg(task.status).color }}>
-                                {taskStatusCfg(task.status).label}
-                              </span>
-                              {getAssignedLabel(task)}
-                              {task.date && (
-                                <span className="inline-flex items-center gap-1 text-[10px] sm:text-xs font-extralight" style={{ color: textMuted }}>
-                                  <Calendar className="w-3 h-3" />
-                                  {task.date?.toDate?.()
-                                    ? new Date(task.date.toDate()).toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' })
-                                    : task.dueDate}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1 flex-shrink-0">
-                          <button
-                            onClick={() => { setSelectedTask(task); setShowTaskDetail(true); setEditingTask(false); }}
-                            className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center transition-all hover:bg-[var(--surface-hover)]"
-                            style={{ color: textMuted }}
-                            title="Ver detalle">
-                            <Eye className="w-3.5 h-3.5" />
-                          </button>
-                          <button onClick={() => handleDeleteTask(task.id, task.title)}
-                            className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center transition-all hover:bg-red-950/40"
-                            style={{ color: textMuted }}>
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* ── Modal detalle / edición de tarea ── */}
-            <Dialog open={showTaskDetail} onOpenChange={(open) => { setShowTaskDetail(open); if (!open) setEditingTask(false); }}>
-              <DialogContent
-                style={{ background: cardBg, borderColor, color: textPrimary }}
-                className="w-[calc(100vw-2rem)] max-w-lg border rounded-2xl max-h-[90vh] overflow-y-auto ceo-scroll">
-                {selectedTask && (() => {
-                  const priCfg = PRIORITY_CONFIG[(editingTask ? editTask.priority : selectedTask.priority) as keyof typeof PRIORITY_CONFIG] ?? PRIORITY_CONFIG.medium;
-                  const assignedUser = users.find(u => u.uid === (editingTask ? editTask.assignedTo : selectedTask.assignedTo));
-                  const dateStr = (() => {
-                    const df = editingTask ? editTask.dueDate : toDateInputValue(selectedTask.date);
-                    if (!df) return '—';
-                    const d = new Date(df + 'T12:00:00');
-                    return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('es-PE', { day: '2-digit', month: 'long', year: 'numeric' });
-                  })();
-
-                  return (
-                    <>
-                      <DialogHeader className="pb-2">
-                        <div className="flex items-center gap-3">
-                          <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${priCfg.dot}`} />
-                          {editingTask ? (
-                            <input
-                              value={editTask.title ?? ''}
-                              onChange={e => setEditTask((p: any) => ({ ...p, title: e.target.value }))}
-                              className="font-extralight text-base bg-transparent border-b outline-none w-full"
-                              style={{ color: textPrimary, borderColor: `${accent}66` }}
-                            />
-                          ) : (
-                            <DialogTitle className="font-extralight text-base leading-snug" style={{ color: textPrimary }}>
-                              {selectedTask.title}
-                            </DialogTitle>
-                          )}
-                        </div>
-                        <DialogDescription className="font-extralight text-xs" style={{ color: textMuted }}>
-                          {editingTask ? 'Modo edición — modifica los campos y guarda' : 'Detalle completo de la tarea'}
-                        </DialogDescription>
-                      </DialogHeader>
-
-                      <div className="space-y-3 sm:space-y-4 mt-1">
-                        {/* Descripción */}
-                        <div className="rounded-xl p-3 sm:p-4 border" style={{ background: surfaceSubtle, borderColor }}>
-                          <p className="text-xs font-extralight uppercase tracking-wider mb-2" style={{ color: textMuted }}>Descripción</p>
-                          {editingTask ? (
-                            <textarea
-                              value={editTask.description ?? ''}
-                              onChange={e => setEditTask((p: any) => ({ ...p, description: e.target.value }))}
-                              rows={3}
-                              className="w-full bg-transparent outline-none resize-none text-sm font-extralight leading-relaxed border-b"
-                              style={{ color: textPrimary, borderColor: `${accent}44` }}
-                            />
-                          ) : (
-                            <p className="text-sm font-extralight leading-relaxed" style={{ color: textPrimary }}>
-                              {selectedTask.description || <span style={{ color: textMuted }}>Sin descripción</span>}
-                            </p>
-                          )}
-                        </div>
-
-                        {/* Info grid */}
-                        <div className="grid grid-cols-2 gap-2 sm:gap-3">
-                          {/* Prioridad */}
-                          <div className="rounded-xl p-3 border" style={{ background: surfaceSubtle, borderColor }}>
-                            <p className="text-xs font-extralight uppercase tracking-wider mb-2" style={{ color: textMuted }}>Prioridad</p>
-                            {editingTask ? (
-                              <select
-                                value={editTask.priority ?? 'medium'}
-                                onChange={e => setEditTask((p: any) => ({ ...p, priority: e.target.value }))}
-                                className="text-xs font-extralight rounded-lg px-2 py-1 outline-none w-full"
-                                style={{ background: cardBg, color: textPrimary, border: `1px solid ${borderColor}` }}>
-                                <option value="high">Alta</option>
-                                <option value="medium">Media</option>
-                                <option value="low">Baja</option>
-                              </select>
-                            ) : (
-                              <span className={`inline-flex items-center gap-1.5 text-xs font-extralight px-2.5 py-1 rounded-full border ${priCfg.bg} ${priCfg.color} ${priCfg.border}`}>
-                                <Flag className="w-3 h-3" /> {priCfg.label}
-                              </span>
-                            )}
-                          </div>
-
-                          {/* Estado */}
-                          <div className="rounded-xl p-3 border" style={{ background: surfaceSubtle, borderColor }}>
-                            <p className="text-xs font-extralight uppercase tracking-wider mb-2" style={{ color: textMuted }}>Estado</p>
-                            {editingTask ? (
-                              <select
-                                value={editTask.status ?? 'pending'}
-                                onChange={e => setEditTask((p: any) => ({ ...p, status: e.target.value }))}
-                                className="text-xs font-extralight rounded-lg px-2 py-1 outline-none w-full"
-                                style={{ background: cardBg, color: textPrimary, border: `1px solid ${borderColor}` }}>
-                                <option value="pending">Pendiente</option>
-                                <option value="in-progress">En progreso</option>
-                                <option value="completed">Completada</option>
-                              </select>
-                            ) : (
-                              <span className="text-xs font-extralight capitalize" style={{ color: taskStatusCfg(selectedTask.status).color }}>
-                                {taskStatusCfg(selectedTask.status).label}
-                              </span>
-                            )}
-                          </div>
-
-                          {/* Fecha límite */}
-                          <div className="rounded-xl p-3 border" style={{ background: surfaceSubtle, borderColor }}>
-                            <p className="text-xs font-extralight uppercase tracking-wider mb-2" style={{ color: textMuted }}>Fecha límite</p>
-                            {editingTask ? (
-                              <input
-                                type="date"
-                                value={editTask.dueDate ?? ''}
-                                onChange={e => setEditTask((p: any) => ({ ...p, dueDate: e.target.value }))}
-                                className="text-xs font-extralight rounded-lg px-2 py-1 outline-none w-full [color-scheme:dark]"
-                                style={{ background: cardBg, color: textPrimary, border: `1px solid ${borderColor}` }}
-                              />
-                            ) : (
-                              <span className="inline-flex items-center gap-1.5 text-xs font-extralight" style={{ color: textPrimary }}>
-                                <Calendar className="w-3.5 h-3.5 flex-shrink-0" style={{ color: textMuted }} /> {dateStr}
-                              </span>
-                            )}
-                          </div>
-
-                          {/* Asignado */}
-                          <div className="rounded-xl p-3 border" style={{ background: surfaceSubtle, borderColor }}>
-                            <p className="text-xs font-extralight uppercase tracking-wider mb-2" style={{ color: textMuted }}>Asignado a</p>
-                            {editingTask ? (
-                              <div className="space-y-2">
-                                <div className="flex rounded-lg overflow-hidden border" style={{ borderColor }}>
-                                  {([
-                                    { mode: 'user' as AssignMode, label: 'User', icon: UserCheck },
-                                    { mode: 'role' as AssignMode, label: 'Rol',  icon: UsersRound },
-                                  ]).map(({ mode, label, icon: Icon }) => (
-                                    <button key={mode} type="button"
-                                      onClick={() => setEditAssignMode(mode)}
-                                      className="flex-1 flex items-center justify-center gap-1 py-1 text-[10px] font-extralight transition-all"
-                                      style={{
-                                        background: editAssignMode === mode ? `${accent}20` : 'transparent',
-                                        color: editAssignMode === mode ? accent : textMuted,
-                                      }}>
-                                      <Icon className="w-3 h-3" /> {label}
-                                    </button>
-                                  ))}
-                                </div>
-                                {editAssignMode === 'user' ? (
-                                  <select
-                                    value={editTask.assignedTo ?? ''}
-                                    onChange={e => setEditTask((p: any) => ({ ...p, assignedTo: e.target.value, assignedToRole: '' }))}
-                                    className="text-xs font-extralight rounded-lg px-2 py-1 outline-none w-full"
-                                    style={{ background: cardBg, color: textPrimary, border: `1px solid ${borderColor}` }}>
-                                    <option value="">Sin asignar</option>
-                                    {users.map(u => (
-                                      <option key={u.uid} value={u.uid}>{u.displayName} ({u.role})</option>
-                                    ))}
-                                  </select>
-                                ) : (
-                                  <select
-                                    value={editTask.assignedToRole ?? ''}
-                                    onChange={e => setEditTask((p: any) => ({ ...p, assignedToRole: e.target.value, assignedTo: '' }))}
-                                    className="text-xs font-extralight rounded-lg px-2 py-1 outline-none w-full"
-                                    style={{ background: cardBg, color: textPrimary, border: `1px solid ${borderColor}` }}>
-                                    <option value="">Sin rol</option>
-                                    {allRoles.map(r => (
-                                      <option key={r} value={r}>{r}</option>
-                                    ))}
-                                  </select>
-                                )}
-                              </div>
-                            ) : (
-                              <>
-                                {selectedTask.assignedToRole ? (
-                                  <span className={`inline-flex items-center gap-1.5 text-xs font-extralight ${getRoleConfig(selectedTask.assignedToRole, allRoles).color}`}>
-                                    <UsersRound className="w-3.5 h-3.5" /> {selectedTask.assignedToRole}
-                                  </span>
-                                ) : assignedUser ? (
-                                  <div className="flex items-center gap-2">
-                                    <div className="w-6 h-6 rounded-md flex items-center justify-center ceo-user-avatar flex-shrink-0">
-                                      {assignedUser.avatar
-                                        ? <img src={assignedUser.avatar} alt="" className="w-full h-full object-cover rounded-md" />
-                                        : <span className="text-xs font-extralight" style={{ color: accent }}>{assignedUser.displayName?.[0]?.toUpperCase()}</span>
-                                      }
-                                    </div>
-                                    <div className="min-w-0">
-                                      <p className="text-xs font-extralight truncate" style={{ color: textPrimary }}>{assignedUser.displayName}</p>
-                                      <p className="text-[10px] font-extralight" style={{ color: textMuted }}>{assignedUser.role}</p>
-                                    </div>
-                                  </div>
-                                ) : (
-                                  <span className="text-xs font-extralight" style={{ color: textMuted }}>Sin asignar</span>
-                                )}
-                              </>
-                            )}
-                          </div>
-                        </div>
-
-                        {selectedTask.createdByName && (
-                          <div className="flex items-center justify-between text-xs font-extralight pt-2 border-t flex-wrap gap-1" style={{ borderColor, color: textMuted }}>
-                            <span>Creado por <span style={{ color: textPrimary }}>{selectedTask.createdByName}</span></span>
-                            <span style={{ color: accent }}>ID: {selectedTask.id?.slice(0, 8)}…</span>
-                          </div>
-                        )}
-                      </div>
-
-                      <DialogFooter className="mt-4 flex-col sm:flex-row gap-2">
-                        {editingTask ? (
-                          <>
-                            <button onClick={() => setEditingTask(false)}
-                              className="w-full sm:w-auto px-4 py-2.5 rounded-xl text-sm font-extralight transition-all hover:bg-[var(--surface-hover)] text-center"
-                              style={{ color: textMuted }}>
-                              Cancelar
-                            </button>
-                            <button onClick={handleUpdateTask}
-                              className="ceo-btn-accent w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-extralight transition-all">
-                              <CheckCircle className="w-3.5 h-3.5" /> Guardar cambios
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <Button variant="ghost" onClick={() => setShowTaskDetail(false)}
-                              className="font-extralight w-full sm:w-auto" style={{ color: textMuted }}>
-                              Cerrar
-                            </Button>
-                            <button
-                              onClick={() => {
-                                const currentMode: AssignMode = selectedTask.assignedToRole ? 'role' : 'user';
-                                setEditAssignMode(currentMode);
-                                setEditTask({
-                                  title:          selectedTask.title       ?? '',
-                                  description:    selectedTask.description ?? '',
-                                  priority:       selectedTask.priority    ?? 'medium',
-                                  status:         selectedTask.status      ?? 'pending',
-                                  dueDate:        toDateInputValue(selectedTask.date),
-                                  assignedTo:     selectedTask.assignedTo     ?? '',
-                                  assignedToRole: selectedTask.assignedToRole ?? '',
-                                });
-                                setEditingTask(true);
-                              }}
-                              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-extralight transition-all border w-full sm:w-auto"
-                              style={{ borderColor: `${accent}44`, color: accent }}>
-                              ✏️ Editar
-                            </button>
-                            <button
-                              onClick={() => { setShowTaskDetail(false); handleDeleteTask(selectedTask.id, selectedTask.title); }}
-                              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-extralight transition-all hover:bg-red-950/40 border w-full sm:w-auto"
-                              style={{ borderColor: 'rgba(248,113,113,0.2)', color: '#f87171' }}>
-                              <Trash2 className="w-3.5 h-3.5" /> Eliminar
-                            </button>
-                          </>
-                        )}
-                      </DialogFooter>
-                    </>
-                  );
-                })()}
-              </DialogContent>
-            </Dialog>
+          <TabsContent value="tasks" className="mt-4 sm:mt-6 ceo-slide-up">
+            {/* Gestor completo: filtros, tablero, vencimientos y reportes por tarea. */}
+            <GestorTareas perfil={userProfile} fechaNueva={fechaNuevaTarea} onVerArchivo={openFileViewer} />
           </TabsContent>
 
           {/* ══════════════════════════════════════════
@@ -2071,29 +1459,29 @@ const CEOPanel: React.FC = () => {
                             <p className="text-xs font-extralight uppercase tracking-wider mb-2" style={{ color: textMuted }}>
                               Archivos Adjuntos ({selectedReport.files.length})
                             </p>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                               {selectedReport.files.map((file, idx) => {
                                 const isImage = file.type?.startsWith('image/');
                                 const isVideo = file.type?.startsWith('video/');
                                 return (
                                   <div key={idx}
-                                    className="group relative rounded-xl overflow-hidden border cursor-pointer transition-all hover:scale-[1.02]"
+                                    className="group relative rounded-xl overflow-hidden border cursor-pointer transition-colors hover:border-[var(--tr-linea-2,rgba(255,255,255,0.15))]"
                                     style={{ background: surfaceSubtle, borderColor }}
                                     onClick={() => openFileViewer(file)}>
                                     {isImage && (
-                                      <div className="aspect-video w-full overflow-hidden">
+                                      <div className="aspect-[4/3] w-full overflow-hidden">
                                         <img src={file.url} alt={file.name} className="w-full h-full object-cover transition-transform group-hover:scale-105"
                                           onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                                       </div>
                                     )}
                                     {isVideo && (
-                                      <div className="aspect-video w-full flex items-center justify-center" style={{ background: '#000' }}>
+                                      <div className="aspect-[4/3] w-full flex items-center justify-center" style={{ background: '#000' }}>
                                         <Play className="w-8 h-8 opacity-60" style={{ color: textPrimary }} />
                                       </div>
                                     )}
                                     {!isImage && !isVideo && (
-                                      <div className="aspect-video w-full flex items-center justify-center" style={{ background: surfaceSubtle }}>
-                                        <File className="w-12 h-12 opacity-30" style={{ color: textPrimary }} />
+                                      <div className="aspect-[4/3] w-full flex items-center justify-center" style={{ background: surfaceSubtle }}>
+                                        <File className="w-8 h-8 opacity-30" style={{ color: textPrimary }} />
                                       </div>
                                     )}
                                     <div className="p-2 sm:p-3">
@@ -2333,7 +1721,7 @@ const CEOPanel: React.FC = () => {
 
             {/* Lightbox */}
             <Dialog open={lightboxOpen} onOpenChange={setLightboxOpen}>
-              <DialogContent className="bg-black/95 border-0 !w-screen !h-[100dvh] !max-w-none !max-h-none p-0 gap-0 overflow-hidden rounded-none">
+              <DialogContent showCloseButton={false} data-fondo="oscuro" className="bg-black/95 border-0 !w-screen !h-[100dvh] !max-w-none !max-h-none p-0 gap-0 overflow-hidden rounded-none">
                 <div className="absolute top-0 left-0 right-0 z-50 flex items-center justify-between px-3 sm:px-4 py-3 bg-gradient-to-b from-black/80 to-transparent">
                   <div className="flex items-center gap-2 min-w-0">
                     <p className="font-extralight text-xs sm:text-sm text-white truncate">{banners[currentBannerIndex]?.titulo}</p>
@@ -2509,9 +1897,11 @@ const CEOPanel: React.FC = () => {
 
         {/* ── Viewer de archivos ── */}
         <Dialog open={showViewer} onOpenChange={setShowViewer}>
-          <DialogContent
-            style={{ background: '#000', borderColor }}
-            className="w-[calc(100vw-1rem)] sm:w-[95vw] max-w-none sm:max-w-[95vw] h-[95dvh] sm:h-[95vh] max-h-none overflow-hidden p-0 gap-0 rounded-2xl">
+          {/* Tamaño acotado: antes ocupaba el 95 % de la pantalla y la imagen
+              quedaba enorme. El fondo oscuro es a propósito (data-fondo). */}
+          <DialogContent showCloseButton={false} data-fondo="oscuro"
+            style={{ background: '#0b0b0e', borderColor }}
+            className="w-[calc(100vw-2rem)] sm:w-[min(88vw,1040px)] max-w-none sm:max-w-none h-[min(84dvh,780px)] max-h-none overflow-hidden p-0 gap-0 rounded-2xl">
             {viewerFile && (
               <div className="flex flex-col h-full">
                 <div className="flex items-center justify-between px-3 sm:px-5 py-2.5 sm:py-3 border-b flex-shrink-0" style={{ borderColor }}>
@@ -2532,13 +1922,13 @@ const CEOPanel: React.FC = () => {
                 </div>
                 <div className="flex-1 flex items-center justify-center overflow-auto p-2 sm:p-4">
                   {viewerFile.type.startsWith('image/') && (
-                    <img src={viewerFile.url} alt={viewerFile.name} className="max-w-full max-h-full object-contain" />
+                    <img src={viewerFile.url} alt={viewerFile.name} className="max-w-full max-h-full object-contain rounded-lg" style={{ maxHeight: 'calc(min(84dvh, 780px) - 90px)' }} />
                   )}
                   {viewerFile.type.startsWith('video/') && (
                     <video src={viewerFile.url} controls className="max-w-full max-h-full rounded-xl">Tu navegador no soporta videos.</video>
                   )}
                   {viewerFile.type === 'application/pdf' && (
-                    <iframe src={viewerFile.url} className="w-full border-0 rounded-xl" style={{ height: 'calc(95dvh - 64px)', minHeight: '300px' }} title={viewerFile.name} />
+                    <iframe src={viewerFile.url} className="w-full border-0 rounded-xl" style={{ height: 'calc(min(84dvh, 780px) - 80px)', minHeight: '300px' }} title={viewerFile.name} />
                   )}
                   {viewerFile.type.startsWith('audio/') && (
                     <div className="flex flex-col items-center gap-4">

@@ -35,7 +35,7 @@ import {
   UserCheck, ShieldCheck, Cpu, Layout, Maximize2, ChevronDown,
   Type, RotateCcw, ZoomIn, ZoomOut, Crop, History, Star,
 } from 'lucide-react';
-import { Megaphone as MegaIcon } from 'lucide-react';
+import { Megaphone as MegaIcon, ListTodo } from 'lucide-react';
 import { previewSound } from '@/lib/notificationSound';
 import type { SoundType } from '@/lib/notificationSound';
 import { getVersion } from '@tauri-apps/api/app';
@@ -92,6 +92,7 @@ const NOTIF_CATEGORIES = [
   { key: 'notifyEmails',        label: 'Correos',    icon: Mail,          color: '#60a5fa' },
   { key: 'notifyThreads',       label: 'Hilos',      icon: GitBranch,     color: '#34d399' },
   { key: 'notifyMessages',      label: 'Mensajería', icon: MessageSquare, color: '#fb923c' },
+  { key: 'notifyTasks',         label: 'Tareas',     icon: ListTodo,      color: '#fbbf24' },
 ] as const;
 
 const FONT_SIZES = ['xs', 'sm', 'md', 'lg', 'xl'] as const;
