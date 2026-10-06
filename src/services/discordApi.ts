@@ -9,7 +9,7 @@
 
 import { auth } from '@/lib/firebase';
 
-const API_URL = 'https://lunanet.nellyx.xyz';
+const API_URL = 'https://api.lunanet.nellyx.xyz';
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
   const token = await auth.currentUser?.getIdToken();

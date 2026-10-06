@@ -24,7 +24,7 @@ const mt = 'hsl(var(--muted-foreground))';
 const LUNA_API = import.meta.env.VITE_LUNA_API_URL
   || import.meta.env.VITE_API_URL
   || import.meta.env.VITE_API_BASE_URL
-  || 'https://lunanet.nellyx.xyz';
+  || 'https://api.lunanet.nellyx.xyz';
 
 /**
  * Llama al endpoint de respuesta. Manda el ID token de Firebase del usuario
