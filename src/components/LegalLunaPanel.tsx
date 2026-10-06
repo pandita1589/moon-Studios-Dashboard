@@ -8,7 +8,7 @@ import { toast } from 'sonner';
 // ─── Legal de Luna NET — privacidad, términos y cookies ─────────────────────
 // Cada documento se edita y se guarda por separado. Se guardan por la API del
 // bot (PUT /api/bot/legal/:doc, requiere sesión de staff), que los publica en
-// luna-net.netlify.app/privacidad, /terminos y /cookies al instante.
+// luna-net.nellyx.xyz/privacidad, /terminos y /cookies al instante.
 
 type DocId = 'privacidad' | 'terminos' | 'cookies';
 type Lang = 'es' | 'en' | 'pt' | 'ja';
@@ -30,7 +30,7 @@ const DOCS: { id: DocId; label: string; Icon: typeof ShieldCheck; color: string 
 const LANGS: { id: Lang; label: string }[] = [
   { id: 'es', label: 'Español' }, { id: 'en', label: 'English' }, { id: 'pt', label: 'Português' }, { id: 'ja', label: '日本語' },
 ];
-const WEB = 'https://luna-net.netlify.app';
+const WEB = 'https://luna-net.nellyx.xyz';
 
 const bd = 'hsl(var(--border))';
 const sf = 'hsl(var(--card))';
