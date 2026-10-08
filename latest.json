@@ -1,11 +1,11 @@
 {
-    "version":  "2.1.46",
-    "notes":  "Nuevo sistema de tareas: pagina Mis tareas, gestor con lista y tablero, vencimientos, reportes por tarea y avisos en la campana. Formularios y ventanas rediseñados, visor de archivos corregido.",
-    "pub_date":  "2026-10-03T23:02:34Z",
+    "version":  "2.1.47",
+    "notes":  "Nueva pestaña Web Luna: edita Sobre nosotros, Contacto y Blog de Luna NET. Mensajeria marca los mensajes de la web de Luna.",
+    "pub_date":  "2026-10-07T19:19:28Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRMDZrZG4yMDRUNDl5MFZCMTJkTmlCcW1KdjZTYlVTdWtHZTNRUk1DTmxTcHZoaElwK210Rm5FNklZTzU2blUvbjg4OGwwei9ESE1Fby91SlI5UG5HMUthWW1meXZBaEFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMDg2NTUzCWZpbGU6bW9vbiBTdHVkaW9zXzIuMS40Nl94NjQtc2V0dXAuZXhlCjBhdVFZK0FKMlc3R25KTTRKUVFRQzlUN0FMSnQzUktoVHRDL3hCUzV6S2JrbytKOXY4RnVrTmQxOVlBQk91bndRc2V4Nk91Ukh2dDZrVDBZZFByZUNnPT0K",
-                                             "url":  "https://github.com/pandita1589/moon-Studios-Dashboard/releases/download/v2.1.46/moon.Studios_2.1.46_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRMDZrZG4yMDRUNHd0amNVdCt1bkROQnpEa0FUWGx1NVFyMXBXdktvSEk3UXdWU25SYkZMcUYvSzBsclBJSDBaMG5RTTBpQmoxalc5UUFIZkVKdldTSjdSTEo2dWVlR2dnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxNDE4NzY3CWZpbGU6bW9vbiBTdHVkaW9zXzIuMS40N194NjQtc2V0dXAuZXhlCmdZSDM1OXdJUzJWSllJTDdoQ2tYcURmUHVHNmhhZUNwZm9DS0RqeW5XN1J6MnJDeWs0ZU1kWnF5bENwc1ozYmlaTnJkUW5XNHBHbXFrbktNWWNHSkF3PT0K",
+                                             "url":  "https://github.com/pandita1589/moon-Studios-Dashboard/releases/download/v2.1.47/moon.Studios_2.1.47_x64-setup.exe"
                                          }
                   }
 }
