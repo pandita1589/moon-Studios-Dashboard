@@ -5,7 +5,7 @@ import {
 import {
   MessagesSquare, Mail, MailOpen, Search, RefreshCw, Trash2, ChevronDown,
   Copy, CheckCheck, AlertCircle, Inbox, Headphones, Globe, Send, Loader2,
-  BadgeCheck, X,
+  BadgeCheck, X, Moon,
 } from 'lucide-react';
 import { db, auth } from '@/lib/firebase';
 import { toast } from 'sonner';
@@ -69,6 +69,11 @@ interface Correo {
   ip_aproximada?: string | null;
   respondido?: boolean;
   respondidoEn?: Timestamp | null;
+  // Los del formulario de la web de Luna (luna-net.nellyx.xyz/contacto)
+  // llegan con origen «web_contacto», sitio «luna-net» y un asunto.
+  sitio?: string;
+  asunto?: string;
+  idioma?: string;
 }
 
 type OrigenFilter = 'todos' | Origen;
@@ -84,6 +89,11 @@ const ORIGEN_CONFIG: Record<string, { label: string; color: string; Icon: typeof
 };
 const origenMeta = (origen: string) =>
   ORIGEN_CONFIG[origen] ?? { label: origen || 'Desconocido', color: mt, Icon: Mail };
+
+const ASUNTOS_LUNA: Record<string, string> = {
+  soporte: 'Soporte con el bot', factura: 'Pagos y Premium', bug: 'Error en el bot', sugerencia: 'Sugerencia',
+  privacidad: 'Privacidad y datos', alianza: 'Alianzas', otro: 'Otro',
+};
 
 // ═══════════════════════════════════════════════════════════════════
 // HELPERS
@@ -134,8 +144,10 @@ const ErrorState: React.FC<{ message: string; onRetry: () => void }> = ({ messag
   </div>
 );
 
-const OrigenBadge: React.FC<{ origen: string }> = ({ origen }) => {
-  const { label, color, Icon } = origenMeta(origen);
+const OrigenBadge: React.FC<{ origen: string; sitio?: string }> = ({ origen, sitio }) => {
+  const { label, color, Icon } = sitio === 'luna-net'
+    ? { label: 'Luna NET', color: '#a5b4fc', Icon: Moon }
+    : origenMeta(origen);
   return (
     <span
       className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full flex-shrink-0"
@@ -451,7 +463,12 @@ const Mensajeria: React.FC = () => {
                       <p className={`text-sm truncate ${correo.leido ? 'font-light' : 'font-medium'}`} style={{ color: correo.leido ? mt : 'white' }}>
                         {correo.nombre}
                       </p>
-                      <OrigenBadge origen={correo.origen} />
+                      <OrigenBadge origen={correo.origen} sitio={correo.sitio} />
+                      {correo.asunto && (
+                        <span className="text-[10px] font-light px-2 py-0.5 rounded-full flex-shrink-0" style={{ border: `1px solid ${bd}`, color: mt }}>
+                          {ASUNTOS_LUNA[correo.asunto] ?? correo.asunto}{correo.idioma && correo.idioma !== 'es' ? ` · ${correo.idioma.toUpperCase()}` : ''}
+                        </span>
+                      )}
                       {correo.respondido && (
                         <span
                           className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full flex-shrink-0"
