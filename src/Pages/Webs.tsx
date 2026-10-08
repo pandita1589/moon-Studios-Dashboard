@@ -50,7 +50,13 @@ const lunaFetch = async (path: string, opts: RequestInit = {}) => {
       ...opts.headers,
     },
   });
-  const json = await res.json();
+  // Una ruta que el bot aún no tiene (o un error del proxy) llega como HTML.
+  const json = await res.json().catch(() => null);
+  if (!json) {
+    throw new Error(res.status === 404
+      ? 'La API de Luna NET todavía no tiene esta función: falta subir y reiniciar el bot.'
+      : `La API de Luna NET respondió algo inesperado (HTTP ${res.status}).`);
+  }
   if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
   return json;
 };
